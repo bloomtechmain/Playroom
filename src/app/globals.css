@@ -1,26 +1,106 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-ink: #24395f;
+  --color-navy: #35609f;
+  --color-navy-dark: #2a4d83;
+  --color-sky: #93bfea;
+  --color-lilac: #b9a3dc;
+  --color-mint: #8bd4bd;
+  --color-rose: #f29cae;
+  --color-sun: #ffd56b;
+  --color-teal: #63c1ca;
+
+  --color-sky-soft: #eaf3fc;
+  --color-lilac-soft: #f2edfa;
+  --color-mint-soft: #e5f6f0;
+  --color-rose-soft: #fdedf1;
+  --color-sun-soft: #fff5d8;
+  --color-teal-soft: #e2f4f5;
+
+  --color-paper: #fbf9f5;
+  --color-line: #ebe5da;
+  --color-muted: #6c7891;
+
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fredoka), var(--font-nunito), ui-sans-serif, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.005em;
+}
+
+/* little colored dashes, borrowed from the logo */
+.sparks {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sparks i {
+  display: block;
+  height: 3px;
+  border-radius: 9px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #e3ddd0;
+  border-radius: 8px;
+}
+
+/* thermal receipt */
+.receipt {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  width: 290px;
+  color: #111;
+  background: #fff;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible !important;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
 }
