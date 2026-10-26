@@ -121,7 +121,10 @@ export interface StayQuote {
   chargedMinutes: number;
   /** 30-minute blocks charged */
   blocks: number;
+  /** children / people for the time, plus guardians (`guardianFee`) */
   base: number;
+  /** accompanying adults in the play area, when Settings charges for them (included in `base`) */
+  guardianFee: number;
   applied: PriceRule[];
   ruleAdjust: number;
   discount: number;
@@ -147,11 +150,37 @@ function priceStay(inp: StayInput, rules: PriceRule[], settings: Settings, now: 
   // a stay that bonus time covers completely is free; otherwise the first block is the minimum
   const blocks = inp.plan && !(bonusMinutes && !chargedMinutes) ? blocksFor(chargedMinutes) : 0;
   const visitors = Math.max(1, inp.ticket.visitors);
-  const base = inp.plan ? blocks * inp.plan.price * visitors : 0;
+  const adultPrice = inp.plan && inp.zone.kind === "play" ? guardianPrice(settings, inp.plan.price) : 0;
+  const guardianFee = blocks * adultPrice * Math.max(0, inp.ticket.adults);
+  const base = (inp.plan ? blocks * inp.plan.price * visitors : 0) + guardianFee;
   // day / time rules use the time the family arrived
   const applied = rulesFor(rules, settings, inp.zone.id, new Date(inp.ticket.checkIn));
   const ruleAdjust = applied.reduce((a, r) => a + (r.adjust === "percent" ? Math.round((base * r.value) / 100) : r.value * visitors), 0);
-  return { plan: inp.plan, minutes, chargedMinutes, blocks, base, applied, ruleAdjust };
+  return { plan: inp.plan, minutes, chargedMinutes, blocks, base, guardianFee, applied, ruleAdjust };
+}
+
+/** What one accompanying adult pays per 30 min in a play zone whose child rate is `childPrice` (0 = free). */
+export function guardianPrice(settings: Settings, childPrice: number) {
+  const g = settings.guardianRate;
+  if (!g?.enabled || !(g.value > 0)) return 0;
+  return g.type === "percent" ? Math.round((childPrice * Math.min(100, g.value)) / 100) : g.value;
+}
+
+/**
+ * Play + co-work in one visit: the combo discount from Settings, as a share per area (in visit order).
+ * `totals` are what each area costs after its promotion.
+ */
+export function comboShares(settings: Settings, areas: { kind: Zone["kind"]; total: number }[]) {
+  const c = settings.comboDiscount;
+  const combo = areas.some((a) => a.kind === "play") && areas.some((a) => a.kind === "cowork");
+  if (!combo || !c?.enabled || !(c.value > 0)) return areas.map(() => 0);
+  if (c.type === "percent") return areas.map((a) => Math.round((a.total * Math.min(100, c.value)) / 100));
+  let left = c.value;
+  return areas.map((a) => {
+    const take = Math.min(a.total, Math.max(0, left));
+    left -= take;
+    return take;
+  });
 }
 
 /**

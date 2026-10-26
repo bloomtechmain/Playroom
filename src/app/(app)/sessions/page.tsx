@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, CircleAlert, Clock3, ScanLine, ShieldAlert } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
-import { BLOCK_MINUTES, stayInputFor, stayQuote, visitOf, type StayQuote } from "@/lib/pricing";
+import { BLOCK_MINUTES, comboShares, stayInputFor, stayQuote, visitOf, type StayQuote } from "@/lib/pricing";
 import type { PayMethod, Ticket } from "@/lib/types";
 import { cx, fmtDT, fmtTime, minsToLabel, money } from "@/lib/utils";
 import { Badge, Button, Card, Input, NoAccess, PageHeader, Select, Table, Tabs, toast } from "@/components/ui";
@@ -158,7 +158,9 @@ function Inner() {
             const c = customers.find((x) => x.id === found.customerId);
             const kids = children.filter((k) => visit.some((t) => t.childIds.includes(k.id)));
             const noRate = lines.find((l) => !l.q?.plan);
-            const gross = totalOf(lines);
+            const combo = comboShares(settings, lines.map((l) => ({ kind: zones.find((z) => z.id === l.t.zoneId)?.kind ?? "play", total: l.q?.total ?? 0 })));
+            const comboOff = combo.reduce((a, b) => a + b, 0);
+            const gross = totalOf(lines) - comboOff;
             const manualAmt = Math.min(Number(manual) || 0, gross);
             const loyalty = Math.min(gross - manualAmt, Math.min(points, c?.points ?? 0) * settings.pointValue);
             const due = gross - manualAmt - loyalty;
@@ -185,7 +187,8 @@ function Inner() {
                           {lines.map(({ t, q }) => (
                             <div key={t.id} className="space-y-1">
                               {visit.length > 1 && <div className="pt-1 text-xs font-bold uppercase tracking-wider text-muted">{zoneName(t.zoneId)}</div>}
-                              <Row l={`${minsToLabel(q!.blocks * BLOCK_MINUTES)} × ${t.visitors}`} r={money(q!.base)} />
+                              <Row l={`${minsToLabel(q!.blocks * BLOCK_MINUTES)} × ${t.visitors}`} r={money(q!.base - q!.guardianFee)} />
+                              {q!.guardianFee > 0 && <Row l={`Guardians × ${t.adults}`} r={money(q!.guardianFee)} />}
                               {q!.applied.map((r) => (
                                 <Row key={r.id} l={r.name} r={money(r.adjust === "percent" ? Math.round((q!.base * r.value) / 100) : r.value * t.visitors)} />
                               ))}
@@ -194,6 +197,11 @@ function Inner() {
                               )}
                             </div>
                           ))}
+                          {comboOff > 0 && (
+                            <div className="border-t border-dashed border-line pt-2">
+                              <Row l="Play + co-work discount" r={<span className="text-[#2f8f72]">-{money(comboOff)}</span>} />
+                            </div>
+                          )}
                           <div className="space-y-2 border-t border-dashed border-line pt-2">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-muted">Promotion</span>

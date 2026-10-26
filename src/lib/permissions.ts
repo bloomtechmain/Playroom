@@ -82,6 +82,7 @@ export const PERMISSION_GROUPS: { module: string; items: { key: string; label: s
       { key: "roles.edit", label: "Edit roles & permissions" },
       { key: "activity.view", label: "View activity log & audit trail" },
       { key: "settings.edit", label: "System settings & backups" },
+      { key: "backups.save", label: "Save the end-of-day backup to this PC's folder (at sign-out / shift close)" },
     ],
   },
 ];
@@ -120,6 +121,7 @@ export const DEFAULT_ROLES: Role[] = [
       "pos.sell",
       "shifts.own",
       "refunds.request",
+      "backups.save",
     ],
   },
   {

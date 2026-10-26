@@ -11,7 +11,8 @@ import {
 import { useStore, useMe, useCan, useMyShift, useBoot, useLiveSync } from "@/lib/store";
 import { useAlerts, useHydrated, useNow } from "@/lib/hooks";
 import { cx, fmtTime } from "@/lib/utils";
-import { Toaster, Tone, toneCls } from "./ui";
+import { backupToFolder, reconnectFolder, useBackupFolder, useBackupFolderSync, useScheduledFolderBackup } from "@/lib/localBackup";
+import { Toaster, Tone, toneCls, toast } from "./ui";
 import { format } from "date-fns";
 
 type NavItem = { href: string; label: string; icon: ReactNode; perm: string; tone: Tone };
@@ -103,7 +104,11 @@ function Frame({ children }: { children: ReactNode }) {
   const path = usePathname();
   const can = useCan();
   const [open, setOpen] = useState(false);
+  const backups = useStore((s) => s.settings.backups);
   useLiveSync();
+  const settings = useStore((s) => s.settings);
+  useBackupFolderSync(backups, can("settings.edit") || can("backups.save"));
+  useScheduledFolderBackup(settings, can("settings.edit") || can("backups.save"));
 
   const nav = (
     <nav className="flex h-full flex-col">
@@ -193,6 +198,10 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const role = roles.find((r) => r.id === me.roleId);
+  const can = useCan();
+  const folder = useBackupFolder();
+  const folderBackup = useStore((s) => s.folderBackup);
+  const canBackup = can("settings.edit") || can("backups.save");
 
   return (
     <header ref={ref} className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-paper/90 px-4 backdrop-blur sm:px-6 lg:px-8 no-print">
@@ -204,6 +213,17 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <span className="ml-2 text-muted tabular">{format(now, "h:mm a")}</span>
       </div>
       <div className="flex-1" />
+
+      {canBackup && folder.name && folder.access !== "granted" && (
+        <button
+          onClick={reconnectFolder}
+          title={`Allow saving backups to the “${folder.name}” folder on this PC`}
+          className="flex items-center gap-2 rounded-full border border-sun bg-sun-soft px-3 py-1.5 text-xs font-bold text-[#8a6510]"
+        >
+          <span className="h-2 w-2 rounded-full bg-[#d9a520]" />
+          Reconnect backup folder
+        </button>
+      )}
 
       <Link
         href="/shifts"
@@ -256,6 +276,13 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             </Link>
             <button
               onClick={async () => {
+                setMenu(null);
+                // end of the day: save a backup into this PC's backup folder before signing out
+                if (canBackup && folder.name) {
+                  toast("Saving the backup…");
+                  const r = await backupToFolder("end-of-day", () => folderBackup(`Signed out · ${me.name}`));
+                  if (r !== "saved" && !confirm(`The backup couldn't be saved to the “${folder.name}” folder. Sign out anyway?`)) return;
+                }
                 await logout();
                 router.replace("/login");
               }}

@@ -402,7 +402,8 @@ function PriceChecker({ initialZone }: { initialZone: string }) {
         ) : (
           <>
             <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between"><span>{minsToLabel(q.blocks * BLOCK_MINUTES)} ({q.blocks} × {money(q.plan.price)}) × {kids}</span><span className="tabular">{money(q.base)}</span></div>
+              <div className="flex justify-between"><span>{minsToLabel(q.blocks * BLOCK_MINUTES)} ({q.blocks} × {money(q.plan.price)}) × {kids}</span><span className="tabular">{money(q.base - q.guardianFee)}</span></div>
+              {q.guardianFee > 0 && <div className="flex justify-between"><span>Guardian (1 adult)</span><span className="tabular">{money(q.guardianFee)}</span></div>}
               {q.applied.map((r) => <div key={r.id} className="flex justify-between text-muted"><span>{r.name}</span><span className="tabular">{r.adjust === "percent" ? `${r.value}%` : money(r.value * kids)}</span></div>)}
               {q.applied.length === 0 && <div className="text-muted">No day/time rules apply.</div>}
               {q.promoError && <div className="text-[#c24f69]">Promotion not applied: {q.promoError}</div>}

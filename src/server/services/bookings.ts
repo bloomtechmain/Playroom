@@ -20,16 +20,30 @@ async function assertSlotFree(m: Mut, b: Pick<Booking, "kind" | "mode" | "date" 
   if (reason) throw badRequest(reason);
 }
 
+/**
+ * A party's total is the package price for its guests, mode and add-ons plus the adjustment (which needs
+ * its own permission); a different figure from the browser needs the price override permission too.
+ */
+async function assertPartyTotal(m: Mut, b: Pick<Booking, "kind" | "mode" | "packageId" | "guests" | "addonIds" | "total" | "adjustment">) {
+  if (b.kind !== "party" || m.actor.can("price.override")) return;
+  const pkg = b.packageId ? await m.find("packages", b.packageId) : undefined;
+  if (!pkg) throw badRequest("Choose a party package");
+  const addons = await readCollection(m.tx, "addons");
+  const expected = Math.max(0, partyPrice(pkg, b.mode ?? "room", b.guests, b.addonIds, addons).total + (b.adjustment ?? 0));
+  if (Math.abs(b.total - expected) > 1) throw new HttpError(403, `The package price is Rs. ${expected.toLocaleString()} — changing it needs the “Override price” permission`);
+}
+
 async function nextRef(m: Mut) {
   await m.lock("booking-ref");
-  const { n } = (await m.tx.one<{ n: number }>("SELECT count(*)::int AS n FROM bookings"))!;
-  return `BK-${1001 + n}`;
+  const { n } = (await m.tx.one<{ n: number }>("SELECT coalesce(max(substring(ref FROM 4)::int), 1000) AS n FROM bookings WHERE ref ~ '^BK-[0-9]+$'"))!;
+  return `BK-${n + 1}`;
 }
 
 export async function createBooking(m: Mut, b: NewBooking, payNow: number, method: PayMethod | "online") {
   await m.get("customers", b.customerId, "Customer");
   if (b.adjustment && !m.actor.can("price.override")) throw new HttpError(403, "Price adjustments need the “Override price” permission");
   if (payNow < 0 || payNow > b.total) throw badRequest("Invalid payment amount");
+  await assertPartyTotal(m, b);
   await assertSlotFree(m, { ...b, id: "" });
   if (method === "wallet" && payNow > 0) await chargeWallet(m, await m.get("customers", b.customerId, "Customer", { lock: true }), payNow);
   const bk = await m.insert("bookings", { ...b, id: uid("b"), ref: await nextRef(m), createdAt: new Date().toISOString(), paid: payNow });
@@ -43,6 +57,9 @@ export async function updateBooking(m: Mut, b: Booking) {
   const ex = await m.get("bookings", b.id, "Booking", { lock: true });
   if ((b.adjustment ?? 0) !== (ex.adjustment ?? 0) && !m.actor.can("price.override"))
     throw new HttpError(403, "Price adjustments need the “Override price” permission");
+  const repriced =
+    b.total !== ex.total || b.packageId !== ex.packageId || b.mode !== ex.mode || b.guests !== ex.guests || b.addonIds.join() !== ex.addonIds.join() || b.kind !== ex.kind;
+  if (repriced) await assertPartyTotal(m, b);
   const moved = b.date !== ex.date || b.start !== ex.start || b.end !== ex.end || b.kind !== ex.kind || b.mode !== ex.mode || b.kids !== ex.kids;
   if (moved && (b.status === "pending" || b.status === "confirmed")) await assertSlotFree(m, b);
   return { before: ex, after: await m.put("bookings", { ...b, ref: ex.ref, paid: ex.paid, createdAt: ex.createdAt, source: b.source ?? ex.source }) };

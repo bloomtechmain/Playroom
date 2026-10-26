@@ -6,6 +6,7 @@ import type { Actor } from "./auth";
 import { db, transaction, type Row, type Sql } from "./db";
 import { insertRow, tableName, toItem, toItems, updateRow, type CollectionKey, type Item } from "./collections";
 import { notFound } from "./http";
+import { commitRev, readVersion, type Changes } from "./rev";
 import { readSettings, saveSettings } from "./snapshot";
 
 const iso = () => new Date().toISOString();
@@ -17,6 +18,11 @@ export function diff(a: Record<string, unknown>, b: Record<string, unknown>) {
     if (k === "password" || k === "passwordHash") continue;
     const x = a[k];
     const y = b[k];
+    // secrets never go into the audit trail
+    if (k === "qrToken") {
+      if (x !== y) out.push("badge re-issued");
+      continue;
+    }
     if (typeof y === "object" || typeof x === "object") {
       if (JSON.stringify(x) !== JSON.stringify(y)) out.push(`${k} changed`);
     } else if (x !== y) out.push(`${k}: ${x ?? "—"} → ${y ?? "—"}`);
@@ -123,6 +129,16 @@ export class Mut {
     return this.insert("transactions", { ...t, at: t.at ?? iso(), id: uid("t"), userId: this.actor.id, shiftId: shift?.id });
   }
 
+  /** What this transaction wrote, for the revision stamp. */
+  changes(): Changes {
+    return {
+      upserts: Object.fromEntries([...this.upserts].map(([k, m]) => [k, m.keys()])),
+      removes: Object.fromEntries([...this.removes].map(([k, ids]) => [k, ids])),
+      settings: this.settingsChanged,
+      reset: this.reload,
+    };
+  }
+
   async toPatch(rev: number): Promise<Patch> {
     if (this.reload) return { rev, reload: true };
     const patch: Patch = { rev, upsert: {}, remove: {} };
@@ -135,18 +151,23 @@ export class Mut {
 
 /** Run `fn` in a transaction; bumps the shared revision so other open screens refresh. */
 export async function mutate<T>(actor: Actor, fn: (m: Mut) => Promise<T>): Promise<{ patch: Patch; result: T }> {
-  return transaction(async (sql) => {
-    const m = new Mut(sql, actor);
-    const result = await fn(m);
-    const rev = await bumpRev(sql);
-    return { patch: await m.toPatch(rev), result };
-  });
-}
-
-export async function bumpRev(sql: Sql) {
-  return (await sql.one<{ rev: number }>("SELECT nextval('state_rev') AS rev"))!.rev;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await transaction(async (sql) => {
+        const m = new Mut(sql, actor);
+        const result = await fn(m);
+        const rev = await commitRev(sql, m.changes());
+        return { patch: await m.toPatch(rev), result };
+      });
+    } catch (e) {
+      // two writes waiting on each other (e.g. a restore while the till is busy): Postgres cancels one —
+      // everything it did was rolled back, so run it again
+      if ((e as { code?: string })?.code !== "40P01" || attempt >= 3) throw e;
+      await new Promise((r) => setTimeout(r, 50 * attempt));
+    }
+  }
 }
 
 export async function currentRev() {
-  return (await db.one<{ rev: number }>("SELECT last_value AS rev FROM state_rev"))!.rev;
+  return (await readVersion(db)).rev;
 }

@@ -69,7 +69,8 @@ export const methodLabel: Record<string, string> = {
 
 export function downloadCSV(name: string, rows: (string | number)[][]) {
   const csv = rows
-    .map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","))
+    // text starting with = + - @ would run as a formula in Excel (names come from the public booking form)
+    .map((r) => r.map((c) => `"${(typeof c === "string" && /^[=+\-@\t\r]/.test(c) && !/^-?[\d,]+(\.\d+)?$/.test(c) ? `'${c}` : String(c ?? "")).replace(/"/g, '""')}"`).join(","))
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");

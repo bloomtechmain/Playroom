@@ -6,8 +6,8 @@
 # Settings (environment): DEPLOY_HOST (default ubuntu@3.7.232.71), DEPLOY_KEY (default ~/.ssh/playroom_lightsail).
 # The server keeps its own database and /opt/playroom/.env.production. Before switching over, the live
 # database is backed up to /var/backups/playroom (last 10 kept). The new version is built next to the
-# running one, so a failed build leaves the live site untouched. Schema changes (database.sql) are
-# applied by hand on the server.
+# running one, so a failed build leaves the live site untouched. Database upgrades in scripts/migrations/
+# are applied before the build; other schema changes are applied by hand on the server.
 set -euo pipefail
 HOST=${DEPLOY_HOST:-ubuntu@3.7.232.71}
 KEY=${DEPLOY_KEY:-$HOME/.ssh/playroom_lightsail}
@@ -31,6 +31,8 @@ sudo -u postgres pg_dump -Fc playroom > "/var/backups/playroom/pre-deploy-$(date
 ls -1t /var/backups/playroom/pre-deploy-*.dump | tail -n +11 | xargs -r rm --
 rm -rf "$APP.new" && mkdir -p "$APP.new" && tar -xzf /tmp/playroom-app.tgz -C "$APP.new" && rm /tmp/playroom-app.tgz
 cp /opt/playroom/.env.production "$APP.new/.env" && chmod 600 "$APP.new/.env"
+# database upgrades (scripts/migrations/*.sql, each safe to re-run and compatible with the running version)
+for f in "$APP.new"/scripts/migrations/*.sql; do [ -e "$f" ] && sudo -u postgres psql playroom -q -v ON_ERROR_STOP=1 -f "$f"; done
 chown -R playroom:playroom "$APP.new"
 sudo -u playroom -H bash -c "cd $APP.new && export NEXT_TELEMETRY_DISABLED=1 && npm ci --no-audit --no-fund --loglevel=error && npm run build > /tmp/playroom-build.log 2>&1 || { tail -30 /tmp/playroom-build.log; exit 1; }"
 rm -rf "$APP.old" && mv "$APP" "$APP.old" && mv "$APP.new" "$APP"

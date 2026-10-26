@@ -36,6 +36,27 @@ export async function exportSnapshot(sql: Sql): Promise<Snapshot> {
 }
 
 /**
+ * Take every table at once before replacing anything. Grabbing them one by one while the till is writing
+ * deadlocks (the restore holds some tables, a sale holds another, each waits for the other); NOWAIT means
+ * the restore holds nothing while it waits, and tries again shortly (up to ~20 s).
+ */
+async function lockAll(sql: Sql) {
+  const tables = COLLECTION_KEYS.map(tableName).join(", ");
+  for (let attempt = 1; ; attempt++) {
+    await sql.query("SAVEPOINT lock_all");
+    try {
+      await sql.query(`LOCK TABLE ${tables} IN ACCESS EXCLUSIVE MODE NOWAIT`);
+      await sql.query("RELEASE SAVEPOINT lock_all");
+      return;
+    } catch (e) {
+      await sql.query("ROLLBACK TO SAVEPOINT lock_all");
+      if ((e as { code?: string })?.code !== "55P03" || attempt >= 200) throw e;
+      await new Promise((r) => setTimeout(r, 25 + Math.random() * 75));
+    }
+  }
+}
+
+/**
  * Replace all business data with a snapshot (seed, reset or restore). Users and roles are upserted
  * rather than truncated so the signed-in session survives when its user still exists.
  * Accepts the original demo's backup files too: plain-text `password` fields are hashed on the way in.
@@ -43,13 +64,16 @@ export async function exportSnapshot(sql: Sql): Promise<Snapshot> {
 export async function importSnapshot(sql: Sql, snap: Snapshot) {
   if (!Array.isArray(snap?.users) || !Array.isArray(snap?.tickets) || !Array.isArray(snap?.roles)) throw new Error("Not a Playroom backup");
 
+  await lockAll(sql);
   const data = COLLECTION_KEYS.filter((k) => k !== "users" && k !== "roles");
   await sql.query(`TRUNCATE ${data.map(tableName).join(", ")} RESTART IDENTITY CASCADE`);
 
   // roles → users (foreign key), then drop the ones that are gone
   for (const r of snap.roles) await insertRow(sql, "roles", r, { upsert: true });
   for (const u of snap.users as (Snapshot["users"][number] & { passwordHash?: string })[]) {
-    const passwordHash = u.passwordHash ?? (await hashPassword(u.password || crypto.randomUUID()));
+    // files without hashes (end-of-day copies) keep the account's current password
+    const current = await sql.one<{ password_hash: string }>("SELECT password_hash FROM users WHERE id = $1", [u.id]);
+    const passwordHash = u.passwordHash ?? (u.password ? await hashPassword(u.password) : (current?.password_hash ?? (await hashPassword(crypto.randomUUID()))));
     await insertRow(sql, "users", u, { upsert: true, extra: { passwordHash } });
   }
   await sql.query("DELETE FROM users WHERE id <> ALL($1::text[])", [snap.users.map((u) => u.id)]);

@@ -53,13 +53,14 @@ interface State extends Collections {
   changePassword: (current: string, next: string) => Promise<string | null>;
 
   // generic records (optimistic)
-  log: (module: string, action: string, detail: string, before?: string, after?: string) => Promise<boolean>;
   save: <K extends CollectionKey>(key: K, item: Item<K>, module: string, label: string, opts?: { quiet?: boolean }) => Promise<boolean>;
   remove: <K extends CollectionKey>(key: K, id: string, module: string, label: string) => Promise<boolean>;
   setSettings: (patch: Partial<Settings>, detail?: string) => Promise<boolean>;
 
   // admin
   backupNow: () => Promise<DB | null>;
+  /** end-of-day snapshot for the PC's backup folder (not stored on the server) */
+  folderBackup: (reason: string) => Promise<DB | null>;
   restoreBackup: (snapshot: DB, fileName: string) => Promise<boolean>;
 
   // money
@@ -143,7 +144,8 @@ export const hasPendingWrites = () => pending > 0;
 const merge = <T extends { id: string }>(list: T[], items: T[], newestFirst: boolean) => {
   const byId = new Map(items.map((x) => [x.id, x]));
   const out = list.map((x) => byId.get(x.id) ?? x);
-  const fresh = items.filter((x) => !list.some((y) => y.id === x.id));
+  const have = new Set(list.map((x) => x.id));
+  const fresh = items.filter((x) => !have.has(x.id));
   return newestFirst ? [...fresh.reverse(), ...out] : [...out, ...fresh];
 };
 
@@ -222,8 +224,20 @@ export const useStore = create<State>()((set, get) => {
         return;
       }
       try {
-        const s = await api<{ rev: number; currentUserId: string; data: Collections & { settings: Settings } }>("/api/state");
-        set({ ...s.data, currentUserId: s.currentUserId, rev: s.rev });
+        // once loaded, ask only for what changed since this screen's revision (the server may still send everything)
+        const { rev, currentUserId } = get();
+        const s = await api<{ rev: number; currentUserId: string; data?: Collections & { settings: Settings }; patch?: Patch }>(
+          currentUserId && rev ? `/api/state?since=${rev}` : "/api/state",
+        );
+        if (s.patch && s.currentUserId === currentUserId) {
+          get().applyPatch(s.patch);
+          set({ rev: s.rev });
+        } else if (s.data) set({ ...s.data, currentUserId: s.currentUserId, rev: s.rev });
+        else {
+          // changes for a different user (signed in as someone else in another tab): load everything
+          set({ rev: 0, currentUserId: undefined });
+          return get().refresh();
+        }
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) set({ ...EMPTY, currentUserId: undefined });
         else throw e;
@@ -273,8 +287,6 @@ export const useStore = create<State>()((set, get) => {
       }
     },
 
-    log: async (module, action, detail, before, after) => !!(await act("/api/activity", { module, action, detail, before, after }, { quiet: true })),
-
     save: (key, item, module, label, opts) =>
       optimistic(
         () =>
@@ -298,6 +310,7 @@ export const useStore = create<State>()((set, get) => {
     setSettings: (patch, detail) => optimistic(() => set((s) => ({ settings: { ...s.settings, ...patch } })), "/api/settings", { patch, detail }, "PATCH"),
 
     backupNow: () => act<DB>("/api/backups"),
+    folderBackup: (reason) => act<DB>("/api/backups/folder", { reason }),
     restoreBackup: async (snapshot, fileName) => {
       const ok = (await act("/api/backups/restore", { snapshot, fileName })) !== null;
       if (ok) await get().refresh();

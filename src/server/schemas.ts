@@ -3,15 +3,13 @@ import { z } from "zod";
 const id = z.string().min(1).max(100);
 const money = z.number().finite().min(0).max(100_000_000);
 const text = (max = 2000) => z.string().max(max);
-const hhmm = z.string().regex(/^\d{2}:\d{2}$/, "expected HH:mm");
-const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected yyyy-MM-dd");
+const hhmm = z.string().regex(/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/, "expected HH:mm");
+const ymd = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "expected yyyy-MM-dd");
 
 export const payMethod = z.enum(["cash", "card", "transfer", "digital", "wallet"]);
 
 export const loginBody = z.object({ username: text(100), password: text(200) });
 export const passwordBody = z.object({ current: text(200), next: text(200) });
-
-export const logBody = z.object({ module: text(60), action: text(80), detail: text(), before: text().optional(), after: text().optional() });
 
 export const recordBody = z.object({
   item: z.record(z.string(), z.unknown()).and(z.object({ id })),
@@ -19,6 +17,8 @@ export const recordBody = z.object({
   label: text(500),
   quiet: z.boolean().optional(),
 });
+
+export const folderBackupBody = z.object({ reason: text(200) });
 
 export const settingsBody = z.object({ patch: z.record(z.string(), z.unknown()), detail: text(500).optional() });
 
@@ -31,7 +31,7 @@ export const checkInBody = z.object({
 
 export const checkoutBody = z.object({
   method: payMethod,
-  points: z.number().int().min(0).default(0),
+  points: z.number().int().min(0).max(100_000_000).default(0),
   /** null = best automatic promotion, "" = none */
   promoId: z.string().max(100).nullable().optional(),
   manualDiscount: money.optional(),
@@ -100,9 +100,9 @@ export const publicBookingBody = z.object({
   start: hhmm,
   packageId: id.optional(),
   mode: z.enum(["room", "full"]),
-  guests: z.number().int(),
-  kids: z.number().int(),
-  hours: z.number().int(),
+  guests: z.number().int().min(0).max(1000),
+  kids: z.number().int().min(0).max(1000),
+  hours: z.number().int().min(0).max(24),
   addonIds: z.array(id).max(50),
   theme: text(200),
   contact: z.object({ name: text(120), phone: text(30), email: text(200), child: text(120) }),

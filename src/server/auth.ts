@@ -2,7 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import type { User } from "@/lib/types";
-import { db } from "./db";
+import { db, type Sql } from "./db";
 import { HttpError } from "./http";
 import { sha256 } from "./password";
 
@@ -42,6 +42,17 @@ export async function destroySession() {
   const token = jar.get(COOKIE)?.value;
   if (token) await db.query("DELETE FROM sessions WHERE id = $1", [sha256(token)]);
   jar.delete(COOKIE);
+}
+
+/** Sign a user out everywhere (password reset by an administrator). */
+export async function endSessions(sql: Sql, userId: string) {
+  await sql.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+}
+
+/** Sign a user out on every other device, keeping this browser's session (own password change). */
+export async function endOtherSessions(sql: Sql, userId: string) {
+  const token = (await cookies()).get(COOKIE)?.value;
+  await sql.query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2", [userId, token ? sha256(token) : ""]);
 }
 
 /** The signed-in staff member, or null. Deactivated users lose access immediately. */

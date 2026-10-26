@@ -218,9 +218,12 @@ function Inner() {
         </Modal>
       )}
 
-      {badge && (
+      {badge && (() => {
+        // the server issues the badge token, so show the stored record once the save comes back
+        const shown = employees.find((e) => e.id === badge.id) ?? badge;
+        return (
         <Modal open onClose={() => setBadge(null)} title="Staff QR badge" width="max-w-sm" footer={<>
-          {can("hr.edit") && <Button variant="ghost" className="mr-auto" icon={<RefreshCw size={14} />} onClick={() => { const nb = { ...badge, qrToken: Math.random().toString(36).slice(2, 9).toUpperCase() }; save("employees", nb, "HR", `Re-issued QR badge for ${badge.name} (old badge revoked)`); setBadge(nb); toast("New badge issued — old one no longer works"); }}>Re-issue</Button>}
+          {can("hr.edit") && <Button variant="ghost" className="mr-auto" icon={<RefreshCw size={14} />} onClick={() => { const nb = { ...shown, qrToken: Math.random().toString(36).slice(2, 9).toUpperCase() }; save("employees", nb, "HR", `Re-issued QR badge for ${badge.name} (old badge revoked)`); setBadge(nb); toast("New badge issued — old one no longer works"); }}>Re-issue</Button>}
           <Button icon={<Printer size={15} />} onClick={() => window.print()}>Print</Button>
         </>}>
           <div className="print-area mx-auto w-[240px] overflow-hidden rounded-2xl border border-line bg-white text-center">
@@ -229,13 +232,14 @@ function Inner() {
               <Logo className="mx-auto w-[120px]" />
               <div className="mt-3 font-display text-lg font-semibold">{badge.name}</div>
               <div className="text-xs text-muted">{badge.designation}</div>
-              <div className="my-3 flex justify-center"><QRCodeSVG value={`PLAYROOM-STAFF:${badge.qrToken}`} size={140} fgColor="#24395f" /></div>
+              <div className="my-3 flex justify-center"><QRCodeSVG value={`PLAYROOM-STAFF:${shown.qrToken}`} size={140} fgColor="#24395f" /></div>
               <div className="font-mono text-xs text-muted">{badge.code}</div>
             </div>
           </div>
           <p className="mt-3 text-center text-xs text-muted">Scan at the <a className="font-bold text-navy" href="/kiosk" target="_blank">clock-in kiosk</a> to clock in and out.</p>
         </Modal>
-      )}
+        );
+      })()}
     </>
   );
 }

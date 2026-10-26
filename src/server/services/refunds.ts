@@ -4,7 +4,7 @@ import { uid } from "@/lib/utils";
 import { actorOf, type Actor } from "../auth";
 import { badRequest, HttpError } from "../http";
 import type { Mut } from "../mutation";
-import { verifyPassword } from "../password";
+import { checkCredentials } from "./account";
 import { creditWallet } from "./money";
 
 export type NewRefund = Omit<RefundRequest, "id" | "at" | "requestedBy" | "status">;
@@ -83,16 +83,17 @@ export async function decideRefund(m: Mut, id: string, approve: boolean, by: Act
   await m.log("Refunds", approve ? "Approved refund" : "Rejected refund", `${r.label} · Rs. ${r.amount.toLocaleString()}`);
 }
 
-/** A manager approves at the counter by typing their credentials on the cashier's screen. */
-export async function managerActor(m: Mut, username: string, password: string): Promise<Actor> {
-  const u = await m.tx.one<{ id: string; name: string; role_id: string; active: boolean; password_hash: string; permissions: string[] | null; locked: boolean | null }>(
-    `SELECT u.id, u.name, u.role_id, u.active, u.password_hash, r.permissions, r.locked
-       FROM users u LEFT JOIN roles r ON r.id = u.role_id
-      WHERE lower(u.username) = lower($1)`,
-    [username.trim()],
+/** A manager approves at the counter by typing their credentials on the cashier's screen (throttled like sign-in). */
+export async function managerActor(m: Mut, username: string, password: string, ip: string): Promise<Actor> {
+  const u = await checkCredentials(username, password, ip, (name) =>
+    m.tx.one<{ id: string; name: string; role_id: string; active: boolean; password_hash: string; permissions: string[] | null; locked: boolean | null }>(
+      `SELECT u.id, u.name, u.role_id, u.active, u.password_hash, r.permissions, r.locked
+         FROM users u LEFT JOIN roles r ON r.id = u.role_id
+        WHERE lower(u.username) = lower($1)`,
+      [name.trim()],
+    ),
   );
-  const ok = u && u.active && u.permissions && (await verifyPassword(password, u.password_hash));
-  const mgr = ok ? actorOf({ id: u.id, name: u.name, roleId: u.role_id }, { permissions: u.permissions!, locked: u.locked }) : undefined;
+  const mgr = u && u.active && u.permissions ? actorOf({ id: u.id, name: u.name, roleId: u.role_id }, { permissions: u.permissions, locked: u.locked }) : undefined;
   if (!mgr || !mgr.can("refunds.approve")) throw new HttpError(403, "Manager credentials not valid for approvals");
   return mgr;
 }

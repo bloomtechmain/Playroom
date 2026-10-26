@@ -6,6 +6,7 @@
 import "dotenv/config";
 import { buildSeed } from "../src/lib/seed";
 import { createPool, transaction, wrap } from "../src/server/db/pool";
+import { commitRev } from "../src/server/rev";
 import { importSnapshot } from "../src/server/snapshot";
 
 async function main() {
@@ -23,7 +24,7 @@ async function main() {
       // the demo shows a few earlier automatic backups (entries only, no stored snapshot)
       const has = await sql.one("SELECT 1 FROM backups LIMIT 1");
       if (!has) for (const [i, b] of backups.entries()) await sql.query("INSERT INTO backups (id, at, size, auto) VALUES ($1, $2, $3, $4)", [`seed-backup-${i}`, b.at, b.size, b.auto]);
-      await sql.query("SELECT nextval('state_rev')");
+      await commitRev(sql, { reset: true });
     });
     const counts = Object.entries(snap)
       .filter(([, v]) => Array.isArray(v))

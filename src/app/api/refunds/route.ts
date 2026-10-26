@@ -1,6 +1,7 @@
 import { requireActor } from "@/server/auth";
 import { badRequest, handler, readBody } from "@/server/http";
 import { mutate } from "@/server/mutation";
+import { clientIp } from "@/server/rateLimit";
 import { refundBody } from "@/server/schemas";
 import { decideRefund, managerActor, requestRefund } from "@/server/services/refunds";
 
@@ -11,7 +12,7 @@ export const POST = handler(async (req) => {
   return mutate(actor, async (m) => {
     if (b.approve === "manager") {
       if (!b.manager) throw badRequest("Manager credentials are required");
-      const mgr = await managerActor(m, b.manager.username, b.manager.password);
+      const mgr = await managerActor(m, b.manager.username, b.manager.password, clientIp(req));
       const r = await requestRefund(m, { ...b.refund, reason: `${b.refund.reason} (approved at counter by ${mgr.name})` });
       await decideRefund(m, r.id, true, mgr);
       return { ...r, approvedBy: mgr.name };

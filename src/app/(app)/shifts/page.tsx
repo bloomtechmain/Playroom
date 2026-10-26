@@ -8,6 +8,7 @@ import { cx, fmtDT, fmtTime, methodLabel, money } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Table, Textarea, toast } from "@/components/ui";
 import ShiftGate from "@/components/ShiftGate";
 import { useNewReport } from "@/lib/useNewReport";
+import { backupToFolder } from "@/lib/localBackup";
 
 const NOTES = [5000, 2000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
 
@@ -29,6 +30,17 @@ function Inner() {
   const [counts, setCounts] = useState<Record<number, string>>({});
   const [notes, setNotes] = useState("");
   const [report, setReport] = useState<string | null>(null);
+
+  const folderBackup = useStore((s) => s.folderBackup);
+  const userName = useStore((s) => s.users.find((u) => u.id === s.currentUserId)?.name ?? "");
+
+  // end of the shift: save a backup into this PC's backup folder (if one is set up on this PC)
+  const saveEndOfDay = async () => {
+    if (!can("settings.edit") && !can("backups.save")) return;
+    const r = await backupToFolder("end-of-day", () => folderBackup(`Shift closed · ${userName}`));
+    if (r === "saved") toast("Backup saved to the PC's backup folder");
+    else if (r !== "no-folder") toast("The backup couldn't be saved to the PC's backup folder", "err");
+  };
 
   const sum = mine ? shiftSummary(mine, tx) : null;
   const counted = NOTES.reduce((a, n) => a + n * (Number(counts[n]) || 0), 0);
@@ -82,7 +94,7 @@ function Inner() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setCounting(false)}>Cancel</Button>
-            <Button onClick={async () => { const id = await close(counted, notes); if (!id) return; setCounting(false); setCounts({}); setNotes(""); toast("Shift closed"); setReport(id); }}>Close shift</Button>
+            <Button onClick={async () => { const id = await close(counted, notes); if (!id) return; setCounting(false); setCounts({}); setNotes(""); toast("Shift closed"); setReport(id); saveEndOfDay(); }}>Close shift</Button>
           </>
         }
       >

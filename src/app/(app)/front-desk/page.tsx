@@ -7,7 +7,7 @@ import { useStore, useCan } from "@/lib/store";
 import { useOccupancy, useNow } from "@/lib/hooks";
 import type { RatePlan, Ticket, Zone } from "@/lib/types";
 import { ageOf, cx, fmtTime, money, timeToMin } from "@/lib/utils";
-import { BLOCK_MINUTES } from "@/lib/pricing";
+import { BLOCK_MINUTES, guardianPrice } from "@/lib/pricing";
 import { Badge, Button, Card, Counter, Meter, NoAccess, PageHeader, Select, SetupNeeded, Tabs, toast } from "@/components/ui";
 import { CustomerPicker } from "@/components/CustomerPicker";
 import { EntryTicket, PrintModal } from "@/components/Receipts";
@@ -143,7 +143,7 @@ function Desk({ playZones, coworkZones }: { playZones: Zone[]; coworkZones: Zone
                     <div className="mt-1.5 text-xs text-muted tabular">
                       {o.inside} inside · {o.available} free · {z.openTime}–{z.closeTime}
                     </div>
-                    <RateLine plans={plans.filter((p) => p.zoneId === z.id && p.active)} unit={z.kind === "play" ? "child" : "person"} />
+                    <RateLine plans={plans.filter((p) => p.zoneId === z.id && p.active)} unit={z.kind === "play" ? "child" : "person"} guardian={z.kind === "play"} />
                     {(mins < timeToMin(z.openTime) || mins >= timeToMin(z.closeTime)) && (
                       <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-[#8a6510]"><AlertTriangle size={13} /> Outside opening hours</p>
                     )}
@@ -254,7 +254,8 @@ function Desk({ playZones, coworkZones }: { playZones: Zone[]; coworkZones: Zone
 }
 
 /** "Rs 750 per 30 min per child" — what the stay will be charged with. */
-function RateLine({ plans, unit }: { plans: RatePlan[]; unit: string }) {
+function RateLine({ plans, unit, guardian }: { plans: RatePlan[]; unit: string; guardian?: boolean }) {
+  const settings = useStore((s) => s.settings);
   if (!plans.length)
     return (
       <p className="mt-2 text-xs text-[#8a6510]">
@@ -263,7 +264,8 @@ function RateLine({ plans, unit }: { plans: RatePlan[]; unit: string }) {
     );
   return (
     <p className="mt-2 text-xs text-muted">
-      Charged on exit: {money(plans[0].price)} per {BLOCK_MINUTES} min per {unit}, time rounded up to the next {BLOCK_MINUTES} min
+      Charged on exit: {money(plans[0].price)} per {BLOCK_MINUTES} min per {unit}
+      {guardian && guardianPrice(settings, plans[0].price) > 0 && <>, {money(guardianPrice(settings, plans[0].price))} per accompanying adult</>}, time rounded up to the next {BLOCK_MINUTES} min
     </p>
   );
 }

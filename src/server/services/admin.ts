@@ -7,12 +7,16 @@ import { uid } from "@/lib/utils";
 import { SYSTEM } from "../auth";
 import { db, transaction, type Sql } from "../db";
 import { badRequest, HttpError } from "../http";
-import { bumpRev, diff, type Mut } from "../mutation";
+import { diff, type Mut } from "../mutation";
+import { commitRev } from "../rev";
+import { settingsPatch } from "../recordSchemas";
 import { exportSnapshot, importSnapshot } from "../snapshot";
 
-/** Settings keys other modules may change (holidays from Pricing, EPF/ETF from Payroll). */
+/** Settings keys other modules may change (holidays & visit discounts from Pricing, EPF/ETF from Payroll). */
 const SETTING_PERMS: Record<string, string> = {
   holidays: "pricing.edit",
+  comboDiscount: "pricing.edit",
+  guardianRate: "pricing.edit",
   expenseCategories: "expenses.edit",
   epfEnabled: "payroll.run",
   etfEnabled: "payroll.run",
@@ -23,11 +27,11 @@ const SETTING_PERMS: Record<string, string> = {
   whatsapp: "whatsapp.connect",
 };
 
-export async function setSettings(m: Mut, patch: Partial<Settings>, detail?: string) {
-  const { backups, ...changes } = patch;
+export async function setSettings(m: Mut, input: Partial<Settings>, detail?: string) {
+  const { backups, ...changes } = settingsPatch.parse(input) as Partial<Settings>;
   void backups; // backups are created through the backup endpoint, never written directly
   for (const k of Object.keys(changes))
-    if (!m.actor.can("settings.edit") && !(SETTING_PERMS[k] && m.actor.can(SETTING_PERMS[k]))) throw new HttpError(403, "You don't have permission to change that setting");
+    if (!m.actor.can("settings.edit") && !(Object.hasOwn(SETTING_PERMS, k) && m.actor.can(SETTING_PERMS[k]))) throw new HttpError(403, "You don't have permission to change that setting");
   if (!Object.keys(changes).length) return;
   if (changes.expenseCategories) {
     const problem = checkExpenseCategories(changes.expenseCategories);
@@ -56,6 +60,17 @@ export async function manualBackup(m: Mut) {
   return snapshot;
 }
 
+/**
+ * End-of-day backup for the PC's backup folder (sign-out / shift close): handed to the browser, not stored on
+ * the server. The PC folder is the real backup, so it is complete (password hashes included): restoring it on
+ * a new server must let everyone sign in again.
+ */
+export async function folderBackup(m: Mut, reason: string) {
+  const snapshot = await exportSnapshot(m.tx);
+  await m.log("Settings", "Backup saved to PC", reason);
+  return snapshot;
+}
+
 export async function downloadBackup(id: string) {
   const b = await db.one<{ at: string; snapshot: Snapshot | null }>("SELECT at, snapshot FROM backups WHERE id = $1", [id]);
   if (!b) throw new HttpError(404, "Backup not found");
@@ -64,6 +79,8 @@ export async function downloadBackup(id: string) {
 }
 
 export async function restoreBackup(m: Mut, snap: Snapshot, fileName: string) {
+  // a restore replaces every account and role, so only the owner may do it
+  if (!(await m.find("roles", m.actor.roleId))?.locked) throw new HttpError(403, "Only the owner can restore a backup");
   try {
     await importSnapshot(m.tx, snap);
   } catch (e) {
@@ -86,15 +103,12 @@ export async function housekeeping() {
   const midnight = startOfDay(new Date()).toISOString();
   await transaction(async (sql) => {
     await sql.query("SELECT pg_advisory_xact_lock(hashtext('housekeeping'))");
-    let changed = false;
-    const expired = await sql.query("UPDATE tickets SET status = 'expired' WHERE status = 'active' AND check_in < $1 RETURNING id", [midnight]);
-    if (expired.length) changed = true;
+    const expired = await sql.query<{ id: string }>("UPDATE tickets SET status = 'expired' WHERE status = 'active' AND check_in < $1 RETURNING id", [midnight]);
     const backedUpToday = await sql.one("SELECT 1 FROM backups WHERE at >= $1 LIMIT 1", [midnight]);
     const hasUsers = await sql.one("SELECT 1 FROM users LIMIT 1");
-    if (!backedUpToday && hasUsers) {
-      await createBackup(sql, true, SYSTEM.id);
-      changed = true;
-    }
-    if (changed) await bumpRev(sql);
+    const backup = !backedUpToday && !!hasUsers;
+    if (backup) await createBackup(sql, true, SYSTEM.id);
+    // the backup list lives in the settings the screens load
+    if (expired.length || backup) await commitRev(sql, { upserts: { tickets: expired.map((t) => t.id) }, settings: backup });
   });
 }

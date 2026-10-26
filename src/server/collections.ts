@@ -68,7 +68,7 @@ export const TABLES = Object.fromEntries(
 ) as Record<CollectionKey, Table>;
 
 export const COLLECTION_KEYS = Object.keys(SPEC) as CollectionKey[];
-export const isCollection = (k: string): k is CollectionKey => k in SPEC;
+export const isCollection = (k: string): k is CollectionKey => Object.hasOwn(SPEC, k);
 
 /** Quote an identifier ("end", "full" and "start" are SQL keywords). */
 export const ident = (s: string) => `"${s.replace(/"/g, '""')}"`;

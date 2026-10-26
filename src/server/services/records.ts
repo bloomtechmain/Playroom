@@ -1,11 +1,14 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { format } from "date-fns";
-import type { Booking, Customer, Expense, PayrollRun, Role, User } from "@/lib/types";
+import type { Booking, Customer, Employee, Expense, PayrollRun, Role, User } from "@/lib/types";
 import { uid } from "@/lib/utils";
+import { endSessions } from "../auth";
 import type { CollectionKey, Item } from "../collections";
 import { badRequest, HttpError } from "../http";
 import { diff, type Mut } from "../mutation";
 import { hashPassword, isStrongPassword } from "../password";
+import { parseRecord } from "../recordSchemas";
 import { updateBooking } from "./bookings";
 import { expenseCategories } from "@/lib/accounting";
 
@@ -35,7 +38,8 @@ const EDIT: Partial<Record<CollectionKey, { perms: string[]; removable?: boolean
 
 const deny = (msg = "You don't have permission to do that") => new HttpError(403, msg);
 
-export async function saveRecord<K extends CollectionKey>(m: Mut, key: K, item: Item<K>, module: string, label: string, opts: { quiet?: boolean } = {}) {
+export async function saveRecord<K extends CollectionKey>(m: Mut, key: K, input: Item<K>, module: string, label: string, opts: { quiet?: boolean } = {}) {
+  const item = parseRecord(key, input) as unknown as Item<K>;
   const rule = EDIT[key];
   const id = (item as { id?: string }).id;
   if (!id) throw badRequest("Missing id");
@@ -84,6 +88,14 @@ export async function saveRecord<K extends CollectionKey>(m: Mut, key: K, item: 
       saved = (await m.put("expenses", { ...x, createdBy: (existing as Expense | undefined)?.createdBy ?? m.actor.id })) as Item<K>;
       break;
     }
+    case "employees": {
+      const e = item as Employee;
+      const ex = existing as Employee | undefined;
+      // badge tokens are made here, not in the browser: a new badge (new employee or re-issue) gets an unguessable one
+      const qrToken = !ex || e.qrToken !== ex.qrToken ? randomBytes(12).toString("hex").toUpperCase() : ex.qrToken;
+      saved = (await m.put("employees", { ...e, qrToken })) as Item<K>;
+      break;
+    }
     case "payroll": {
       const ex = existing as PayrollRun | undefined;
       if (ex?.status === "paid") throw badRequest("This payroll run has already been paid");
@@ -116,12 +128,18 @@ async function saveUser(m: Mut, u: User, ex: User | undefined) {
   const username = u.username.trim().toLowerCase();
   if (!u.name.trim() || !username) throw badRequest("Name and username are required");
   if (await m.tx.one("SELECT 1 FROM users WHERE lower(username) = $1 AND id <> $2", [username, u.id])) throw badRequest("Username already taken");
+  // the owner role (locked: full access) is out of reach for everyone else: an administrator who could
+  // reset the owner's password, rename their login or hand out the role could take the business over
+  const role = await m.find("roles", u.roleId);
+  if (!role) throw badRequest("Unknown role");
+  const actorIsOwner = !!(await m.find("roles", m.actor.roleId))?.locked;
+  const exIsOwner = !!ex && !!(await m.find("roles", ex.roleId))?.locked;
+  if (exIsOwner && !actorIsOwner) throw deny("Only the owner can change the owner account");
+  if (role.locked && !exIsOwner && !actorIsOwner) throw deny("Only the owner can grant the owner role");
   if (ex) {
     if (ex.id === m.actor.id && !u.active) throw badRequest("You can't deactivate your own account");
-    if (ex.roleId === "owner" && (!u.active || u.roleId !== "owner")) throw badRequest("The owner account can't be deactivated or demoted");
+    if (exIsOwner && (!u.active || !role.locked)) throw badRequest("The owner account can't be deactivated or demoted");
   }
-  if (u.roleId === "owner" && ex?.roleId !== "owner" && m.actor.roleId !== "owner") throw deny("Only the owner can grant the owner role");
-  if (!(await m.find("roles", u.roleId))) throw badRequest("Unknown role");
   if (u.employeeId && u.employeeId !== ex?.employeeId) {
     if (!(await m.find("employees", u.employeeId))) throw badRequest("Unknown staff member");
     if (await m.tx.one("SELECT 1 FROM users WHERE employee_id = $1 AND id <> $2", [u.employeeId, u.id])) throw badRequest("That staff member already has a login");
@@ -131,7 +149,8 @@ async function saveUser(m: Mut, u: User, ex: User | undefined) {
   const passwordHash = u.password ? await hashPassword(u.password) : ex ? await currentHash(m, ex.id) : undefined;
   if (!passwordHash) throw badRequest("A password is required for new users");
   const { password, ...rest } = u;
-  void password;
+  // a reset password signs the user out everywhere (unless it's your own, set from this browser)
+  if (password && ex && ex.id !== m.actor.id) await endSessions(m.tx, ex.id);
   return m.put("users", { ...rest, username, lastLogin: ex?.lastLogin, createdAt: ex?.createdAt ?? u.createdAt } as User, { passwordHash });
 }
 

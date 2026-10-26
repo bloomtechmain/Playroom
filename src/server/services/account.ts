@@ -1,9 +1,11 @@
 import "server-only";
-import { actorOf, createSession, destroySession, type Actor } from "../auth";
+import { randomUUID } from "node:crypto";
+import { actorOf, createSession, destroySession, endOtherSessions, type Actor } from "../auth";
 import { db } from "../db";
 import { badRequest, HttpError } from "../http";
 import { mutate, type Mut } from "../mutation";
 import { hashPassword, isStrongPassword, verifyPassword } from "../password";
+import { clear, note, recent } from "../rateLimit";
 
 interface UserRow {
   id: string;
@@ -23,26 +25,35 @@ const actorFor = (u: UserRow) => actorOf({ id: u.id, name: u.name, roleId: u.rol
 
 const findByLogin = (name: string) => db.one<UserRow>(`${USER_WITH_ROLE} WHERE lower(u.username) = lower($1)`, [name.trim()]);
 
-// Slow down password guessing: 5 failures per username in 15 minutes locks that username for a while.
-const failures = new Map<string, number[]>();
+// Slow down password guessing. Locks are per username *and* address, so someone elsewhere typing wrong
+// passwords can't lock the owner out at the venue: 5 failures for a username from one address, 20 from one
+// address overall, or 100 for one username from anywhere (a spread-out attack), within 15 minutes.
 const WINDOW = 15 * 60_000;
-function tooManyFailures(key: string) {
-  const recent = (failures.get(key) ?? []).filter((t) => Date.now() - t < WINDOW);
-  failures.set(key, recent);
-  return recent.length >= 5;
-}
-const noteFailure = (key: string) => failures.set(key, [...(failures.get(key) ?? []), Date.now()]);
+const TOO_MANY = "Too many attempts — wait a few minutes and try again";
 
-export async function login(username: string, password: string) {
-  const key = username.trim().toLowerCase();
-  if (tooManyFailures(key)) throw new HttpError(429, "Too many attempts — wait a few minutes and try again");
-  const u = await findByLogin(username);
-  if (!u || !(await verifyPassword(password, u.password_hash))) {
-    noteFailure(key);
-    throw new HttpError(401, "Wrong username or password");
+/** Throttled password check shared by sign-in and the manager sign-off at the counter. */
+export async function checkCredentials<T extends { password_hash: string }>(username: string, password: string, ip: string, find: (name: string) => Promise<T | undefined>) {
+  const name = username.trim().toLowerCase();
+  const keys = [`login:${name}@${ip}`, `login-ip:${ip}`, `login-user:${name}`];
+  if (recent(keys[0], WINDOW) >= 5 || recent(keys[1], WINDOW) >= 20 || recent(keys[2], WINDOW) >= 100) throw new HttpError(429, TOO_MANY);
+  const u = await find(username);
+  // unknown usernames still pay for a hash so response times don't reveal which usernames exist
+  const ok = await verifyPassword(password, u?.password_hash ?? (await dummyHash()));
+  if (!u || !ok) {
+    keys.forEach(note);
+    return undefined;
   }
+  clear(keys[0]);
+  return u;
+}
+
+let dummy: Promise<string> | undefined;
+const dummyHash = () => (dummy ??= hashPassword(randomUUID()));
+
+export async function login(username: string, password: string, ip: string) {
+  const u = await checkCredentials(username, password, ip, findByLogin);
+  if (!u) throw new HttpError(401, "Wrong username or password");
   if (!u.active) throw new HttpError(403, "This account has been deactivated. Please contact an administrator.");
-  failures.delete(key);
   await createSession(u.id);
   return mutate(actorFor(u), async (m) => {
     await m.update("users", u.id, { lastLogin: new Date().toISOString() });
@@ -61,5 +72,7 @@ export async function changePassword(m: Mut, current: string, next: string) {
   if (!isStrongPassword(next)) throw badRequest("Use 8+ characters with letters and numbers");
   if (next === current) throw badRequest("Choose a different password");
   await m.update("users", u.id, { mustChangePassword: false, passwordHash: await hashPassword(next) });
+  // anyone else signed in with the old password is signed out
+  await endOtherSessions(m.tx, u.id);
   await m.log("Auth", "Updated", `${u.name} changed password`);
 }

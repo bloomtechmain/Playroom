@@ -32,7 +32,8 @@ export async function recordSale(m: Mut, cart: Pick<SaleItem, "productId" | "qty
 
   await m.lock("sale-no");
   const prefix = `S${format(new Date(), "yyMMdd")}-`;
-  const { n } = (await m.tx.one<{ n: number }>("SELECT count(*)::int AS n FROM sales WHERE no LIKE $1", [`${prefix}%`]))!;
+  // the highest number so far, not the count: a gap (e.g. after a restore) must not reuse a number
+  const { n } = (await m.tx.one<{ n: number }>("SELECT coalesce(max(substring(no FROM $2::int)::int), 0) AS n FROM sales WHERE no LIKE $1 AND substring(no FROM $2::int) ~ '^[0-9]+$'", [`${prefix}%`, prefix.length + 1]))!;
   const shift = await m.myShift();
   const sale = await m.insert("sales", {
     id: uid("s"),

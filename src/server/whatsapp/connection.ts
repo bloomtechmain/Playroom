@@ -1,7 +1,8 @@
 import makeWASocket, { Browsers, DisconnectReason, fetchLatestBaileysVersion, type WASocket } from "baileys";
 import pino from "pino";
 import { uid } from "@/lib/utils";
-import { sharedPool, wrap } from "../db/pool";
+import { sharedPool, transaction, wrap } from "../db/pool";
+import { commitRev } from "../rev";
 import { clearAuth, isLinked, dbAuthState } from "./auth";
 
 /**
@@ -105,11 +106,14 @@ export async function connect() {
           "UPDATE customers SET whatsapp_opt_out = true WHERE right(regexp_replace(phone, '\\D', '', 'g'), 9) = right($1, 9) AND NOT whatsapp_opt_out RETURNING id, name",
           [phone],
         );
+        const logged: string[] = [];
         for (const c of hit) {
-          await s.query("INSERT INTO activity (id, at, user_id, module, action, detail) VALUES ($1, now(), 'system', 'WhatsApp', 'Opted out', $2)", [uid("ac"), `${c.name} replied STOP — no more promotions`]);
+          const id = uid("ac");
+          await s.query("INSERT INTO activity (id, at, user_id, module, action, detail) VALUES ($1, now(), 'system', 'WhatsApp', 'Opted out', $2)", [id, `${c.name} replied STOP — no more promotions`]);
+          logged.push(id);
         }
         if (hit.length) {
-          await s.query("SELECT nextval('state_rev')");
+          await transaction(sharedPool(), (tx) => commitRev(tx, { upserts: { customers: hit.map((c) => c.id), activity: logged } }));
           await sock.sendMessage(m.key.remoteJid!, { text: "You won't receive offers from us any more. Thank you!" }).catch(() => undefined);
         }
       }

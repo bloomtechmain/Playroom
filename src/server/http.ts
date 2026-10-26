@@ -23,6 +23,8 @@ const PG_ERRORS: Record<string, [number, string]> = {
   "22003": [400, "A number is out of range"],
   "22007": [400, "A date or time is invalid"],
   "22008": [400, "A date or time is invalid"],
+  "40P01": [503, "The system is busy — please try again"],
+  "55P03": [503, "The system is busy — please try again"],
 };
 
 function toResponse(e: unknown) {
@@ -50,10 +52,19 @@ export function handler<C = unknown>(fn: (req: NextRequest, ctx: C) => Promise<u
   };
 }
 
-export async function readBody<T extends z.ZodType>(req: NextRequest, schema: T): Promise<z.infer<T>> {
+/** Parse and validate a JSON body. Bodies over `maxBytes` (1 MB unless a route needs more) are refused unread. */
+export async function readBody<T extends z.ZodType>(req: NextRequest, schema: T, maxBytes = 1_000_000): Promise<z.infer<T>> {
+  if (Number(req.headers.get("content-length")) > maxBytes) throw new HttpError(413, "That request is too large");
+  let text: string;
+  try {
+    text = await req.text();
+  } catch {
+    throw badRequest("Request body must be JSON");
+  }
+  if (Buffer.byteLength(text) > maxBytes) throw new HttpError(413, "That request is too large");
   let json: unknown;
   try {
-    json = await req.json();
+    json = JSON.parse(text);
   } catch {
     throw badRequest("Request body must be JSON");
   }

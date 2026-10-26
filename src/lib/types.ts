@@ -408,6 +408,15 @@ export interface Settings {
   /** expense categories and where each goes in the P&L; absent = the defaults in lib/accounting.ts */
   expenseCategories?: import("./accounting").ExpenseCategoryDef[];
   backups: { id?: string; at: string; size: number; auto: boolean }[];
+  /** play area + co-work in the same visit: a discount on the whole visit (absent/off = none) */
+  comboDiscount?: { enabled: boolean; type: "percent" | "fixed"; value: number };
+  /**
+   * accompanying adults (guardians) in the play area: absent/off = free; on = charged per 30 min each,
+   * either a % of the zone's child rate or a fixed amount
+   */
+  guardianRate?: { enabled: boolean; type: "percent" | "fixed"; value: number };
+  /** automatic backups into the office PC's folder: times of day ("HH:mm") and days to keep (see lib/localBackup.ts) */
+  localBackup?: { times: string[]; keepDays: number };
   /** WhatsApp messaging (see lib/whatsapp.ts for the defaults) */
   whatsapp?: Partial<import("./whatsapp").WhatsAppSettings>;
 }

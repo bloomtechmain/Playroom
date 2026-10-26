@@ -10,6 +10,7 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createPool, transaction } from "../src/server/db/pool";
+import { commitRev } from "../src/server/rev";
 
 const DATA_TABLES = [
   "zones", "rate_plans", "price_rules", "promotions", "customers", "children", "tickets", "transactions",
@@ -31,7 +32,7 @@ async function main() {
       await sql.query(`TRUNCATE ${DATA_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
       await sql.query("DELETE FROM users WHERE lower(username) <> ALL($1::text[])", [keep]); // their sessions go with them
       await sql.query("UPDATE settings SET data = $1::jsonb WHERE id = 1", [defaults]);
-      await sql.query("SELECT nextval('state_rev')");
+      await commitRev(sql, { reset: true });
       console.log(`Database cleared. Kept ${kept.length} account(s): ${kept.map((u) => u.username).join(", ")} and all roles.`);
     });
   } finally {

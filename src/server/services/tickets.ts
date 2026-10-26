@@ -1,6 +1,6 @@
 import "server-only";
 import { format } from "date-fns";
-import { lockoutAt, stayInputFor, stayQuote } from "@/lib/pricing";
+import { comboShares, lockoutAt, stayInputFor, stayQuote } from "@/lib/pricing";
 import type { PayMethod } from "@/lib/types";
 import { minsToLabel, uid } from "@/lib/utils";
 import { badRequest, HttpError } from "../http";
@@ -14,7 +14,7 @@ export interface CheckInInput {
   customerId: string;
   /** children playing (play area) */
   childIds: string[];
-  /** accompanying adults in the play area (free, counted for safety) */
+  /** accompanying adults in the play area (counted for safety; charged only if Settings → guardian rate is on) */
   adults: number;
   /** one or two areas: a play zone and/or a co-work zone, with how many visitors each */
   areas: { zoneId: string; visitors: number }[];
@@ -50,7 +50,8 @@ export async function checkIn(m: Mut, inp: CheckInInput) {
 
   await m.lock("ticket-code");
   const prefix = `PR${format(new Date(), "yyMMdd")}-`;
-  const { n } = (await m.tx.one<{ n: number }>("SELECT count(*)::int AS n FROM tickets WHERE code LIKE $1", [`${prefix}%`]))!;
+  // the highest number so far, not the count: a gap (e.g. after a restore) must not reuse a code
+  const { n } = (await m.tx.one<{ n: number }>("SELECT coalesce(max(substring(code FROM $2::int)::int), 0) AS n FROM tickets WHERE code LIKE $1 AND substring(code FROM $2::int) ~ '^[0-9]+$'", [`${prefix}%`, prefix.length + 1]))!;
   const at = new Date().toISOString();
   const visitId = `${prefix}${String(n + 1).padStart(4, "0")}`;
   const out = [];
@@ -140,11 +141,14 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
     return q;
   });
 
-  const gross = quotes.reduce((a, q) => a + q.total, 0);
-  const manualShares = allocate(Math.min(manual, gross), quotes.map((q) => q.total));
+  // play + co-work together: the combo discount from Settings comes off before manual discounts and points
+  const combo = comboShares(settings, visit.map((t, i) => ({ kind: zones.find((z) => z.id === t.zoneId)?.kind ?? "play", total: quotes[i].total })));
+  const totals = quotes.map((q, i) => q.total - combo[i]);
+  const gross = totals.reduce((a, b) => a + b, 0);
+  const manualShares = allocate(Math.min(manual, gross), totals);
   const afterManual = gross - manualShares.reduce((a, b) => a + b, 0);
   const loyalty = Math.min(afterManual, Math.max(0, Math.min(opts.points, cust?.points ?? 0)) * settings.pointValue);
-  const loyaltyShares = allocate(loyalty, quotes.map((q, i) => q.total - manualShares[i]));
+  const loyaltyShares = allocate(loyalty, totals.map((t, i) => t - manualShares[i]));
   const due = afterManual - loyalty;
 
   if (cust) {
@@ -155,7 +159,7 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
   const out = [];
   for (const [i, t] of visit.entries()) {
     const q = quotes[i];
-    const final = q.total - manualShares[i] - loyaltyShares[i];
+    const final = totals[i] - manualShares[i] - loyaltyShares[i];
     out.push(
       await m.update("tickets", t.id, {
         status: "completed",
@@ -166,7 +170,7 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
         ruleAdjust: q.ruleAdjust,
         ruleNames: q.applied.map((r) => r.name),
         promoId: q.promo?.id,
-        discount: q.discount + manualShares[i],
+        discount: q.discount + combo[i] + manualShares[i],
         loyaltyUsed: loyaltyShares[i],
         overtimeFee: 0,
         total: final,
@@ -174,7 +178,7 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
       }),
     );
     const kind = zones.find((z) => z.id === t.zoneId)?.kind === "cowork" ? "cowork" : "play";
-    const discount = q.discount + manualShares[i] + loyaltyShares[i];
+    const discount = q.discount + combo[i] + manualShares[i] + loyaltyShares[i];
     if (final > 0) await m.addTx({ type: kind, method: opts.method, amount: final, ref: t.id, refLabel: t.code, customerId: t.customerId, discount });
   }
   for (const q of quotes) {
