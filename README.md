@@ -41,6 +41,22 @@ Sign in as the Owner, then add zones, rates, packages and staff accounts from th
 | `DATABASE_URL` | PostgreSQL connection string |
 | `TZ` | Set to the venue's time zone (e.g. `Asia/Colombo`) on the server. Ticket numbers, “today”, attendance dates and the daily backup use the server's local date. |
 
+## Live server (AWS)
+
+Amazon Lightsail, Mumbai (`ap-south-1`): Ubuntu 24.04, 2 GB plan, static IP `3.7.232.71`, live at **https://3-7-232-71.sslip.io**.
+
+| Part | Where |
+|---|---|
+| App | `/opt/playroom/app`, systemd service `playroom` (starts on boot, restarts on crash), listens on 127.0.0.1:3000 |
+| Settings | `/opt/playroom/.env.production` (database password; copied into the app on each deploy) |
+| HTTPS | Caddy (`/etc/caddy/Caddyfile`), Let's Encrypt certificate renewed automatically |
+| Database | PostgreSQL 18, database and user `playroom`, local connections only |
+| Backups | Lightsail automatic snapshot daily at 02:30 (Colombo), the app's own daily backup, and a database dump before every deploy in `/var/backups/playroom` |
+
+Deploy committed changes: `scripts/deploy.sh` (needs the SSH key `~/.ssh/playroom_lightsail`). It refuses uncommitted work, backs up the database, builds beside the running version and switches over; the previous version stays in `/opt/playroom/app.old`. Schema changes are applied by hand: `sudo -u postgres psql playroom`.
+
+Useful on the server: `sudo systemctl status playroom`, `sudo journalctl -u playroom -f`, `sudo systemctl restart playroom`.
+
 ## Architecture
 
 ```
