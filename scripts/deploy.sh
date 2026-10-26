@@ -32,7 +32,7 @@ ls -1t /var/backups/playroom/pre-deploy-*.dump | tail -n +11 | xargs -r rm --
 rm -rf "$APP.new" && mkdir -p "$APP.new" && tar -xzf /tmp/playroom-app.tgz -C "$APP.new" && rm /tmp/playroom-app.tgz
 cp /opt/playroom/.env.production "$APP.new/.env" && chmod 600 "$APP.new/.env"
 # database upgrades (scripts/migrations/*.sql, each safe to re-run and compatible with the running version)
-for f in "$APP.new"/scripts/migrations/*.sql; do [ -e "$f" ] && sudo -u postgres psql playroom -q -v ON_ERROR_STOP=1 -f "$f"; done
+for f in "$APP.new"/scripts/migrations/*.sql; do [ -e "$f" ] && sudo -u postgres psql playroom -q -v ON_ERROR_STOP=1 < "$f"; done  # stdin: postgres can't read the app folder
 chown -R playroom:playroom "$APP.new"
 sudo -u playroom -H bash -c "cd $APP.new && export NEXT_TELEMETRY_DISABLED=1 && npm ci --no-audit --no-fund --loglevel=error && npm run build > /tmp/playroom-build.log 2>&1 || { tail -30 /tmp/playroom-build.log; exit 1; }"
 rm -rf "$APP.old" && mv "$APP" "$APP.old" && mv "$APP.new" "$APP"
