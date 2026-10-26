@@ -11,6 +11,8 @@
 set -euo pipefail
 HOST=${DEPLOY_HOST:-ubuntu@3.7.232.71}
 KEY=${DEPLOY_KEY:-$HOME/.ssh/playroom_lightsail}
+# keep-alives: the build runs for minutes without output, and an idle connection can be dropped silently
+SSH=(ssh -i "$KEY" -o ServerAliveInterval=30 -o ServerAliveCountMax=10)
 cd "$(dirname "$0")/.."
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -20,8 +22,8 @@ fi
 REV=$(git rev-parse --short HEAD)
 echo "Deploying $REV to $HOST…"
 
-git archive --format=tar.gz HEAD | ssh -i "$KEY" "$HOST" "cat > /tmp/playroom-app.tgz"
-ssh -i "$KEY" "$HOST" "sudo REV=$REV bash -s" <<'REMOTE'
+git archive --format=tar.gz HEAD | "${SSH[@]}" "$HOST" "cat > /tmp/playroom-app.tgz"
+"${SSH[@]}" "$HOST" "sudo REV=$REV bash -s" <<'REMOTE'
 set -euo pipefail
 APP=/opt/playroom/app
 mkdir -p /var/backups/playroom
