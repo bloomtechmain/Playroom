@@ -1,6 +1,6 @@
 import { addDays, addMinutes, differenceInCalendarDays, format, setHours, setMinutes, startOfDay, startOfMonth, subDays, endOfMonth, subMonths } from "date-fns";
 import { DEFAULT_ROLES } from "./permissions";
-import { overtimeFor, quote } from "./pricing";
+import { stayQuote } from "./pricing";
 import type {
   Activity,
   Addon,
@@ -118,19 +118,14 @@ export function buildSeed(): DB {
   ];
 
   const zones: Zone[] = [
-    { id: "z-play", name: "Kids Play Area", kind: "play", capacity: 40, nearFullPct: 80, openTime: "09:00", closeTime: "20:00", basePrice: 1500, minAge: 1, maxAge: 12, rules: "Grip socks required. Under 4s must have a guardian inside. No food in the soft-play.", active: true, color: "sky" },
-    { id: "z-party", name: "Party Room", kind: "party", capacity: 40, nearFullPct: 90, openTime: "10:00", closeTime: "21:00", basePrice: 0, rules: "Bookings only. Outside cakes allowed. Setup starts 30 min before.", active: true, color: "rose" },
-    { id: "z-cowork", name: "Co-Work Lounge", kind: "cowork", capacity: 12, nearFullPct: 75, openTime: "08:00", closeTime: "20:00", basePrice: 800, rules: "Quiet zone. Wi-Fi and coffee refills included.", active: true, color: "mint" },
+    { id: "z-play", name: "Kids Play Area", kind: "play", capacity: 40, nearFullPct: 80, openTime: "09:00", closeTime: "20:00", minAge: 1, maxAge: 12, rules: "Grip socks required. Under 4s must have a guardian inside. No food in the soft-play.", active: true, color: "sky" },
+    { id: "z-party", name: "Party Room", kind: "party", capacity: 40, nearFullPct: 90, openTime: "10:00", closeTime: "21:00", rules: "Bookings only. Outside cakes allowed. Setup starts 30 min before.", active: true, color: "rose" },
+    { id: "z-cowork", name: "Co-Work Lounge", kind: "cowork", capacity: 12, nearFullPct: 75, openTime: "08:00", closeTime: "20:00", rules: "Quiet zone. Wi-Fi and coffee refills included.", active: true, color: "mint" },
   ];
 
   const ratePlans: RatePlan[] = [
-    { id: "rp1", zoneId: "z-play", name: "Half Hour", unit: "half", minutes: 30, price: 900, graceMinutes: 5, overtimeBlock: 15, overtimePrice: 300, active: true },
-    { id: "rp2", zoneId: "z-play", name: "1 Hour", unit: "hour", minutes: 60, price: 1500, graceMinutes: 10, overtimeBlock: 15, overtimePrice: 300, active: true },
-    { id: "rp3", zoneId: "z-play", name: "2 Hours", unit: "custom", minutes: 120, price: 2600, graceMinutes: 10, overtimeBlock: 15, overtimePrice: 300, active: true },
-    { id: "rp4", zoneId: "z-play", name: "Day Pass", unit: "custom", minutes: 480, price: 4000, graceMinutes: 15, overtimeBlock: 30, overtimePrice: 400, active: true },
-    { id: "rp5", zoneId: "z-cowork", name: "Hourly Desk", unit: "hour", minutes: 60, price: 800, graceMinutes: 10, overtimeBlock: 30, overtimePrice: 400, active: true },
-    { id: "rp6", zoneId: "z-cowork", name: "Half Day (4h)", unit: "custom", minutes: 240, price: 2500, graceMinutes: 15, overtimeBlock: 30, overtimePrice: 400, active: true },
-    { id: "rp7", zoneId: "z-cowork", name: "Full Day", unit: "custom", minutes: 600, price: 4200, graceMinutes: 15, overtimeBlock: 60, overtimePrice: 500, active: true },
+    { id: "rp1", zoneId: "z-play", price: 750, active: true },
+    { id: "rp2", zoneId: "z-cowork", price: 400, active: true },
   ];
 
   const rules: PriceRule[] = [
@@ -263,7 +258,8 @@ export function buildSeed(): DB {
     nic: `${ri(198500000, 200299999)}${ri(1000, 9999)}`,
     joinDate: D(subDays(now, ri(120, 900))),
     basic: basic as number,
-    allowance: allowance as number,
+    allowances: (allowance as number) ? [{ name: "Transport", amount: Math.round((allowance as number) * 0.6), epf: false }, { name: "Cost of living", amount: (allowance as number) - Math.round((allowance as number) * 0.6), epf: true }] : [],
+    deductions: i === 2 ? [{ name: "Staff loan instalment", amount: 3000 }] : [],
     otRate: Math.round(((basic as number) / 240) * 1.5),
     epf: epf as boolean,
     etf: epf as boolean,
@@ -312,71 +308,76 @@ export function buildSeed(): DB {
 
     const makeTicket = (zoneId: string, checkIn: Date, forceActive = false) => {
       const zone = zones.find((z) => z.id === zoneId)!;
-      const plans = ratePlans.filter((p) => p.zoneId === zoneId);
-      const plan = zoneId === "z-play" ? pick([plans[0], plans[1], plans[1], plans[1], plans[2], plans[2], plans[3]]) : pick([plans[0], plans[0], plans[1], plans[2]]);
+      const plan = ratePlans.find((p) => p.zoneId === zoneId)!;
       const cust = pick(customers);
       const kids = children.filter((c) => c.guardianId === cust.id);
       const chosen = zoneId === "z-play" ? kids.slice(0, ri(1, kids.length)) : [];
       const visitors = zoneId === "z-play" ? chosen.length : ri(1, 2);
+      const adults = zoneId === "z-play" ? ri(1, 2) : 0;
       let promo: Promotion | undefined;
-      const ctx = { at: checkIn, zone, plan, visitors, adults: zoneId === "z-play" ? ri(1, 2) : 0, childAges: chosen.map((c) => ageOfAt(c.dob, checkIn)), member: cust.member, priorVisits: priorVisits[cust.id] ?? 0 };
       if (cust.member) promo = promotions[0];
       else if (visitors === 3 && r() < 0.6) promo = promotions[1];
       else if (r() < 0.08) promo = promotions[2];
       else if (r() < 0.05) promo = promotions[4];
-      const q = quote(ctx, rules, settings, promo, 0);
-      if (promo && q.promoError) promo = undefined;
-      const q2 = promo ? q : quote(ctx, rules, settings, undefined, 0);
-      if (promo) promo.used++;
+      // time actually spent — charged at check-out in 30-minute blocks
+      const stay = Math.max(8, (zoneId === "z-play" ? pick([30, 60, 60, 60, 90, 120, 120, 180]) : pick([60, 60, 120, 240, 480])) + ri(-12, 25));
+      const out = addMinutes(checkIn, stay);
+      const q = stayQuote(
+        { ticket: { zoneId, checkIn: iso(checkIn), visitors, adults }, zone, plan, childAges: chosen.map((c) => ageOfAt(c.dob, checkIn)), member: cust.member, priorVisits: priorVisits[cust.id] ?? 0 },
+        rules,
+        settings,
+        promotions,
+        out,
+        { promoChoice: promo?.id ?? "" },
+      );
       priorVisits[cust.id] = (priorVisits[cust.id] ?? 0) + 1;
+      // nothing is priced until check-out, same as the front desk
       const t: Ticket = {
         id: `tk-${dkey}-${seq + 1}`,
         code: codeFor(),
         customerId: cust.id,
         childIds: chosen.map((c) => c.id),
         visitors,
-        adults: ctx.adults,
+        adults,
         zoneId,
-        ratePlanId: plan.id,
-        minutes: q2.minutes,
+        minutes: 0,
         checkIn: iso(checkIn),
         status: "active",
-        base: q2.base,
-        ruleAdjust: q2.ruleAdjust,
-        ruleNames: q2.applied.map((x) => x.name),
-        promoId: promo?.id,
-        discount: q2.discount,
+        base: 0,
+        ruleAdjust: 0,
+        ruleNames: [],
+        discount: 0,
         loyaltyUsed: 0,
         overtimeFee: 0,
-        total: q2.total,
-        paid: q2.total,
+        total: 0,
+        paid: 0,
         createdBy: cashierId,
         reprints: 0,
       };
-      // payment is taken at check-out: session price + any overtime, in one go
-      const method = cust.wallet > q2.total && r() < 0.5 ? "wallet" : pickMethod();
+      const method = cust.wallet > q.total && r() < 0.5 ? "wallet" : pickMethod();
       const kind = zoneId === "z-play" ? "play" : "cowork";
-      t.paid = 0;
-      const endPlanned = addMinutes(checkIn, t.minutes);
       const x = r();
       if (!isToday && x < 0.012) {
         // cancelled before play started — nothing was charged
         t.status = "cancelled";
         t.checkOut = iso(addMinutes(checkIn, 4));
       } else if (!forceActive) {
-        const out = addMinutes(endPlanned, ri(-12, r() < 0.25 ? 45 : 10));
         if (out < now) {
           t.checkOut = iso(out);
-          t.status = "completed";
-          const ot = overtimeFor(t, plan, out);
-          t.paid = t.total;
+          Object.assign(t, {
+            status: "completed",
+            ratePlanId: plan.id,
+            minutes: q.minutes,
+            base: q.base,
+            ruleAdjust: q.ruleAdjust,
+            ruleNames: q.applied.map((y) => y.name),
+            promoId: q.promo?.id,
+            discount: q.discount,
+            total: q.total,
+            paid: q.total,
+          });
+          if (q.promo) q.promo.used++;
           tx({ at: t.checkOut, type: kind, method, amount: t.total, ref: t.id, refLabel: t.code, customerId: cust.id, shiftId, userId: cashierId, discount: t.discount });
-          if (ot.fee > 0) {
-            t.overtimeFee = ot.fee;
-            t.total += ot.fee;
-            t.paid += ot.fee;
-            tx({ at: t.checkOut, type: "overtime", method, amount: ot.fee, ref: t.id, refLabel: t.code, customerId: cust.id, shiftId, userId: cashierId, discount: 0 });
-          }
           if (method === "wallet") cust.wallet = Math.max(0, cust.wallet - t.paid);
           cust.points += Math.floor((t.paid / 100) * settings.pointsPer100);
           if (!isToday && x < 0.022) {
@@ -414,11 +415,6 @@ export function buildSeed(): DB {
       // live floor: kids currently inside
       for (let i = 0; i < 17; i++) makeTicket("z-play", subMinutesSafe(now, ri(4, 95)), true);
       for (let i = 0; i < 5; i++) makeTicket("z-cowork", subMinutesSafe(now, ri(10, 200)), true);
-      // a couple who are overstaying
-      const late = tickets.filter((t) => t.status === "active" && t.zoneId === "z-play").slice(0, 2);
-      late.forEach((t) => {
-        t.checkIn = iso(subMinutesSafe(now, t.minutes + ri(20, 35)));
-      });
     }
 
     // POS sales
@@ -560,7 +556,7 @@ export function buildSeed(): DB {
     const m = subMonths(now, mBack);
     const month = format(m, "yyyy-MM");
     const paidOn = endOfMonth(m);
-    const lines = employees.map((e) => calcPayLine(e, settings, ri(0, 14), e.id === "e7" ? 2500 : 0));
+    const lines = employees.map((e) => calcPayLine(e, settings, ri(0, 14), e.id === "e7" ? { deductions: [...e.deductions, { name: "Salary advance", amount: 2500 }] } : {}));
     const run: PayrollRun = { id: `pay-${month}`, month, status: "paid", lines, createdAt: iso(subDays(paidOn, 2)), paidAt: iso(paidOn), createdBy: "u7" };
     payroll.push(run);
     if (paidOn >= subDays(now, DAYS)) {

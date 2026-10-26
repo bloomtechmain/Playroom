@@ -9,9 +9,6 @@ import { sha256 } from "./password";
 const COOKIE = "pr_session";
 const TTL_MS = 7 * 24 * 3600 * 1000;
 
-/** Demo conveniences (role switcher, demo accounts list, on-screen reset codes, kiosk demo badges). */
-export const DEMO_MODE = process.env.DEMO_MODE === "true";
-
 export interface Actor {
   id: string;
   name: string;
@@ -69,8 +66,4 @@ export async function requireActor(...perms: string[]): Promise<Actor> {
   if (!actor) throw new HttpError(401, "Please sign in again");
   if (perms.length && !perms.some((p) => actor.can(p))) throw new HttpError(403, "You don't have permission to do that");
   return actor;
-}
-
-export function requireDemo() {
-  if (!DEMO_MODE) throw new HttpError(403, "Only available in demo mode");
 }

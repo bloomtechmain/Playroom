@@ -1,27 +1,45 @@
-import type { Attendance, Employee, PayLine, Settings } from "./types";
+import type { Attendance, Employee, PayItem, PayLine, Settings } from "./types";
+
+const sum = (items: PayItem[]) => items.reduce((a, x) => a + x.amount, 0);
+
+/** Drops blank rows and keeps amounts whole, non-negative rupees. */
+export const cleanItems = (items: PayItem[]) =>
+  items.map((x) => ({ ...x, name: x.name.trim(), amount: Math.max(0, Math.round(Number(x.amount) || 0)) })).filter((x) => x.name && x.amount > 0);
+
+/** A pay line's allowances — older runs only stored the total. */
+export const lineAllowances = (l: PayLine): PayItem[] => l.allowances ?? (l.allowance ? [{ name: "Fixed allowance", amount: l.allowance }] : []);
+/** A pay line's deductions other than EPF — older runs only stored the total. */
+export const lineDeductions = (l: PayLine): PayItem[] => l.deductionItems ?? (l.deductions ? [{ name: "Advances / no-pay", amount: l.deductions }] : []);
 
 /**
  * Sri Lanka statutory contributions:
- *  - EPF: employee 8%, employer 12% (of basic, optionally + fixed allowances)
- *  - ETF: employer 3%
+ *  - EPF: employee 8%, employer 12% of basic plus the allowances marked for EPF
+ *  - ETF: employer 3% of the same base
  * Both can be switched off globally (settings) or per employee.
+ * Allowances and deductions come from the employee's record unless this month's are given.
  */
-export function calcPayLine(e: Employee, s: Settings, otHours: number, deductions: number): PayLine {
+export function calcPayLine(e: Employee, s: Settings, otHours: number, month: { allowances?: PayItem[]; deductions?: PayItem[] } = {}): PayLine {
+  const allowances = cleanItems(month.allowances ?? e.allowances ?? []);
+  const deductionItems = cleanItems(month.deductions ?? e.deductions ?? []);
+  const allowance = sum(allowances);
   const otPay = Math.round(otHours * e.otRate);
-  const gross = e.basic + e.allowance + otPay;
-  const base = e.basic + (s.epfIncludesAllowance ? e.allowance : 0);
+  const gross = e.basic + allowance + otPay;
+  const base = e.basic + sum(allowances.filter((a) => a.epf));
   const epfOn = s.epfEnabled && e.epf;
   const etfOn = s.etfEnabled && e.etf;
   const epfEmployee = epfOn ? Math.round((base * s.epfEmployeePct) / 100) : 0;
   const epfEmployer = epfOn ? Math.round((base * s.epfEmployerPct) / 100) : 0;
   const etfEmployer = etfOn ? Math.round((base * s.etfPct) / 100) : 0;
+  const deductions = sum(deductionItems);
   return {
     employeeId: e.id,
     basic: e.basic,
-    allowance: e.allowance,
+    allowance,
+    allowances,
     otHours,
     otPay,
     deductions,
+    deductionItems,
     gross,
     epfEmployee,
     epfEmployer,

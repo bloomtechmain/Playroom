@@ -91,8 +91,6 @@ export async function checkIn(m: Mut, inp: CheckInInput) {
 
 export interface CheckoutOptions {
   method: PayMethod;
-  /** waive the extra-time blocks (manager) */
-  waive: boolean;
   points: number;
   /** undefined/null = best automatic promotion, "" = none, id = that promotion */
   promoId?: string | null;
@@ -118,7 +116,6 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
     ? await m.rows("tickets", "SELECT * FROM tickets WHERE visit_id = $1 AND status = 'active' ORDER BY seq FOR UPDATE", [first.visitId])
     : [first];
   const manual = Math.max(0, opts.manualDiscount ?? 0);
-  if (opts.waive && !m.actor.can("price.override")) throw new HttpError(403, "Waiving extra time needs the price override permission");
   const settings = await m.settings();
   if (manual > 0 && !m.actor.can("price.override") && settings.priceEditNeedsPermission) throw new HttpError(403, "Manual discounts need the “Override price” permission");
 
@@ -138,7 +135,7 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
   const now = new Date();
   const quotes = visit.map((t) => {
     const inp = stayInputFor(t, { zones, ratePlans, children }, !!cust?.member, prior);
-    const q = inp && stayQuote(inp, rules, settings, promotions, now, { promoChoice: opts.promoId, waiveExtra: opts.waive });
+    const q = inp && stayQuote(inp, rules, settings, promotions, now, { promoChoice: opts.promoId });
     if (!q?.plan) throw badRequest(`${zones.find((z) => z.id === t.zoneId)?.name ?? "This zone"} has no active rate — add one in Pricing`);
     return q;
   });
@@ -159,9 +156,6 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
   for (const [i, t] of visit.entries()) {
     const q = quotes[i];
     const final = q.total - manualShares[i] - loyaltyShares[i];
-    // discounts come off the time charge first; what is left of the extra time is reported as overtime
-    const extra = Math.min(q.extra, final);
-    const session = final - extra;
     out.push(
       await m.update("tickets", t.id, {
         status: "completed",
@@ -174,15 +168,14 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
         promoId: q.promo?.id,
         discount: q.discount + manualShares[i],
         loyaltyUsed: loyaltyShares[i],
-        overtimeFee: extra,
+        overtimeFee: 0,
         total: final,
         paid: final,
       }),
     );
     const kind = zones.find((z) => z.id === t.zoneId)?.kind === "cowork" ? "cowork" : "play";
     const discount = q.discount + manualShares[i] + loyaltyShares[i];
-    if (session > 0) await m.addTx({ type: kind, method: opts.method, amount: session, ref: t.id, refLabel: t.code, customerId: t.customerId, discount });
-    if (extra > 0) await m.addTx({ type: "overtime", method: opts.method, amount: extra, ref: t.id, refLabel: t.code, customerId: t.customerId, discount: 0 });
+    if (final > 0) await m.addTx({ type: kind, method: opts.method, amount: final, ref: t.id, refLabel: t.code, customerId: t.customerId, discount });
   }
   for (const q of quotes) {
     if (!q.promo) continue;
@@ -193,9 +186,9 @@ export async function checkoutVisit(m: Mut, id: string, opts: CheckoutOptions) {
   await m.log(
     "Tickets",
     "Checked out & paid",
-    `${first.visitId ?? first.code} · ${minsToLabel(quotes[0].minutes)} · Rs. ${due.toLocaleString()}${quotes.some((q) => q.extra) ? " incl. extra time" : ""}${opts.waive ? " · extra time waived" : ""}${loyalty ? ` · ${loyalty} pts redeemed` : ""}`,
+    `${first.visitId ?? first.code} · ${minsToLabel(quotes[0].minutes)} · Rs. ${due.toLocaleString()}${loyalty ? ` · ${loyalty} pts redeemed` : ""}`,
   );
-  if (cust) await queueReceipt(m.tx, settings, cust, out, zones, ratePlans, opts.method, m.actor.id);
+  if (cust) await queueReceipt(m.tx, settings, cust, out, zones, opts.method, m.actor.id);
   if (manual > 0) await m.log("Pricing", "Price override", `${first.visitId ?? first.code} · manual discount Rs. ${Math.min(manual, gross).toLocaleString()} — ${cust?.name ?? ""}`);
   return out;
 }

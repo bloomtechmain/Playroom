@@ -10,9 +10,9 @@ import type { Row, Sql } from "./db/pool";
  */
 const SPEC = {
   roles: ["roles", "id name description permissions locked?"],
-  users: ["users", "id name username email phone roleId active passwordHash mustChangePassword? lastLogin? createdAt"],
-  zones: ["zones", "id name kind capacity nearFullPct openTime closeTime basePrice minAge? maxAge? rules active color"],
-  ratePlans: ["rate_plans", "id zoneId name unit minutes price graceMinutes overtimeBlock overtimePrice active"],
+  users: ["users", "id name username email phone roleId active passwordHash mustChangePassword? lastLogin? createdAt employeeId?"],
+  zones: ["zones", "id name kind capacity nearFullPct openTime closeTime minAge? maxAge? rules active color"],
+  ratePlans: ["rate_plans", "id zoneId price active"],
   rules: ["price_rules", "id name kind days start end date? adjust value zoneIds active"],
   promotions: ["promotions", "id code name type value packageKids? validFrom validTo usageCap used auto active zoneIds targeting*"],
   customers: ["customers", "id name phone email address member points wallet notes whatsappOptOut createdAt"],
@@ -33,7 +33,7 @@ const SPEC = {
   shifts: ["shifts", "id userId openedAt closedAt? openingFloat countedCash? notes"],
   refunds: ["refunds", "id at target targetId label maxAmount amount full category? reason method requestedBy status decidedBy? decidedAt?"],
   expenses: ["expenses", "id date category description vendor amount paidFrom payrollRunId? createdBy"],
-  employees: ["employees", "id code name designation phone nic joinDate basic allowance otRate epf etf epfNo bank active qrToken color"],
+  employees: ["employees", "id code name designation phone nic joinDate basic allowances* deductions* otRate epf etf epfNo bank active qrToken color"],
   attendance: ["attendance", "id employeeId date clockIn clockOut? method"],
   payroll: ["payroll_runs", "id month status lines* createdAt paidAt? createdBy"],
   activity: ["activity", "id at userId module action detail before? after?"],

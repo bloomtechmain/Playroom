@@ -1,6 +1,7 @@
 import "server-only";
 import { startOfDay } from "date-fns";
-import { buildSeed, type DB as Snapshot } from "@/lib/seed";
+import type { DB as Snapshot } from "@/lib/seed";
+import { checkExpenseCategories } from "@/lib/accounting";
 import type { Settings } from "@/lib/types";
 import { uid } from "@/lib/utils";
 import { SYSTEM } from "../auth";
@@ -12,6 +13,7 @@ import { exportSnapshot, importSnapshot } from "../snapshot";
 /** Settings keys other modules may change (holidays from Pricing, EPF/ETF from Payroll). */
 const SETTING_PERMS: Record<string, string> = {
   holidays: "pricing.edit",
+  expenseCategories: "expenses.edit",
   epfEnabled: "payroll.run",
   etfEnabled: "payroll.run",
   epfEmployeePct: "payroll.run",
@@ -27,6 +29,10 @@ export async function setSettings(m: Mut, patch: Partial<Settings>, detail?: str
   for (const k of Object.keys(changes))
     if (!m.actor.can("settings.edit") && !(SETTING_PERMS[k] && m.actor.can(SETTING_PERMS[k]))) throw new HttpError(403, "You don't have permission to change that setting");
   if (!Object.keys(changes).length) return;
+  if (changes.expenseCategories) {
+    const problem = checkExpenseCategories(changes.expenseCategories);
+    if (problem) throw badRequest(problem);
+  }
   const { backups: _b, ...before } = await m.settings();
   void _b;
   await m.saveSettings({ ...before, ...changes });
@@ -68,16 +74,10 @@ export async function restoreBackup(m: Mut, snap: Snapshot, fileName: string) {
   m.requestReload();
 }
 
-export async function resetDemo(m: Mut) {
-  await importSnapshot(m.tx, buildSeed());
-  await m.log("Settings", "Reset demo data", "Rebuilt sample history");
-  m.requestReload();
-}
-
 let lastHousekeeping = 0;
 
 /**
- * Daily chores the demo did on page load: tickets still "active" from a previous day become
+ * Daily chores: tickets still "active" from a previous day become
  * "expired", and one automatic backup is taken per day. Runs at most once a minute per server.
  */
 export async function housekeeping() {

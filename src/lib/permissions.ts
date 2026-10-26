@@ -6,7 +6,7 @@ export const PERMISSION_GROUPS: { module: string; items: { key: string; label: s
     module: "Front Desk & Tickets",
     items: [
       { key: "tickets.sell", label: "Issue tickets / check-in" },
-      { key: "tickets.checkout", label: "Check-out & collect overtime" },
+      { key: "tickets.checkout", label: "Check-out & collect payment" },
       { key: "tickets.view", label: "Search & view tickets" },
       { key: "tickets.reprint", label: "Reprint tickets" },
       { key: "tickets.cancel", label: "Cancel tickets" },

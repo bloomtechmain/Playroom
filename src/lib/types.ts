@@ -23,6 +23,8 @@ export interface User {
   mustChangePassword?: boolean;
   lastLogin?: string;
   createdAt: string;
+  /** the Staff record this login belongs to */
+  employeeId?: string;
 }
 
 export interface Zone {
@@ -33,7 +35,6 @@ export interface Zone {
   nearFullPct: number;
   openTime: string; // "09:00"
   closeTime: string;
-  basePrice: number;
   minAge?: number;
   maxAge?: number;
   rules: string;
@@ -41,16 +42,11 @@ export interface Zone {
   color: string;
 }
 
+/** A zone's rate: the price of each 30 minutes, per child (play) / per person (cowork). */
 export interface RatePlan {
   id: string;
   zoneId: string;
-  name: string;
-  unit: "hour" | "half" | "custom";
-  minutes: number;
-  price: number; // per child (play) / per person (cowork)
-  graceMinutes: number;
-  overtimeBlock: number; // minutes
-  overtimePrice: number; // per block, per child
+  price: number;
   active: boolean;
 }
 
@@ -291,33 +287,25 @@ export interface RefundRequest {
   decidedAt?: string;
 }
 
-export const EXPENSE_CATEGORIES = [
-  "Rent",
-  "Utilities",
-  "Salaries",
-  "EPF / ETF (Employer)",
-  "Supplies",
-  "Stock Purchases",
-  "Maintenance & Cleaning",
-  "Marketing",
-  "Food & Party Supplies",
-  "Bank & Card Fees",
-  "Other",
-  "Equipment (Capex)",
-  "Owner Drawings",
-] as const;
-export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
-
 export interface Expense {
   id: string;
   date: string;
-  category: ExpenseCategory;
+  /** a name from settings.expenseCategories (see lib/accounting.ts) */
+  category: string;
   description: string;
   vendor: string;
   amount: number;
   paidFrom: "cash" | "bank";
   payrollRunId?: string;
   createdBy: string;
+}
+
+/** A named allowance or deduction on a salary, e.g. "Transport" 5,000. */
+export interface PayItem {
+  name: string;
+  amount: number;
+  /** allowances only: counts towards the EPF/ETF base */
+  epf?: boolean;
 }
 
 export interface Employee {
@@ -329,7 +317,10 @@ export interface Employee {
   nic: string;
   joinDate: string;
   basic: number;
-  allowance: number;
+  /** fixed monthly allowances */
+  allowances: PayItem[];
+  /** recurring monthly deductions (loan instalments, welfare fund…) */
+  deductions: PayItem[];
   otRate: number; // per hour
   epf: boolean;
   etf: boolean;
@@ -352,10 +343,16 @@ export interface Attendance {
 export interface PayLine {
   employeeId: string;
   basic: number;
+  /** total of `allowances` */
   allowance: number;
+  /** this month's allowances (older runs only stored the total — see payroll.ts lineAllowances) */
+  allowances?: PayItem[];
   otHours: number;
   otPay: number;
+  /** total of `deductionItems` (EPF is separate) */
   deductions: number;
+  /** this month's deductions, recurring and one-off (older runs only stored the total) */
+  deductionItems?: PayItem[];
   gross: number;
   epfEmployee: number;
   epfEmployer: number;
@@ -405,7 +402,11 @@ export interface Settings {
   workStart: string;
   standardHours: number;
   openingCash: number;
+  /** income tax on profit, % — the P&L estimates tax at this rate; 0/absent = only tax payments recorded as expenses */
+  incomeTaxPct?: number;
   holidays: { date: string; name: string }[];
+  /** expense categories and where each goes in the P&L; absent = the defaults in lib/accounting.ts */
+  expenseCategories?: import("./accounting").ExpenseCategoryDef[];
   backups: { id?: string; at: string; size: number; auto: boolean }[];
   /** WhatsApp messaging (see lib/whatsapp.ts for the defaults) */
   whatsapp?: Partial<import("./whatsapp").WhatsAppSettings>;

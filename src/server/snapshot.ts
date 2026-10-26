@@ -56,7 +56,14 @@ export async function importSnapshot(sql: Sql, snap: Snapshot) {
   await sql.query("DELETE FROM roles WHERE id <> ALL($1::text[])", [snap.roles.map((r) => r.id)]);
 
   for (const key of data) {
-    const list = ((snap as unknown as Record<string, Record<string, unknown>[]>)[key] ?? []).slice();
+    let list = ((snap as unknown as Record<string, Record<string, unknown>[]>)[key] ?? []).slice();
+    // backups from before itemised pay had one allowance figure per employee
+    if (key === "employees")
+      list = list.map(({ allowance, ...e }) => ({
+        ...e,
+        allowances: e.allowances ?? (Number(allowance) > 0 ? [{ name: "Fixed allowance", amount: Number(allowance), epf: !!snap.settings?.epfIncludesAllowance }] : []),
+        deductions: e.deductions ?? [],
+      }));
     // keep newest-first collections' ordering stable: insert oldest first so seq follows time
     if (NEWEST_FIRST.has(key)) list.reverse();
     await insertMany(sql, key, list);

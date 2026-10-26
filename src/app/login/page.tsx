@@ -6,7 +6,6 @@ import { useBoot, useStore } from "@/lib/store";
 import { useHydrated } from "@/lib/hooks";
 import { Button, Field, Input } from "@/components/ui";
 import { Logo } from "@/components/Shell";
-import { cx } from "@/lib/utils";
 
 export default function LoginPage() {
   const mounted = useHydrated();
@@ -17,19 +16,12 @@ export default function LoginPage() {
 
 function Login() {
   const router = useRouter();
-  const users = useStore((s) => s.users);
-  const roles = useStore((s) => s.roles);
   const login = useStore((s) => s.login);
-  const requestReset = useStore((s) => s.requestPasswordReset);
-  const resetPassword = useStore((s) => s.resetPassword);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"login" | "forgot" | "reset" | "done">("login");
+  const [mode, setMode] = useState<"login" | "forgot">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [code, setCode] = useState("");
-  const [sentCode, setSentCode] = useState("");
-  const [newPw, setNewPw] = useState("");
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,26 +30,6 @@ function Login() {
     setBusy(false);
     if (err) return setError(err);
     router.replace("/dashboard");
-  };
-
-  const sendReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const r = await requestReset(username);
-    if (r.error) return setError(r.error);
-    setSentCode(r.code ?? "");
-    setError("");
-    setMode("reset");
-  };
-
-  const strong = newPw.length >= 8 && /\d/.test(newPw) && /[A-Za-z]/.test(newPw);
-  const doReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!strong) return setError("Use at least 8 characters with letters and numbers");
-    const err = await resetPassword(username, code, newPw);
-    if (err) return setError(err);
-    setError("");
-    setPassword("");
-    setMode("done");
   };
 
   return (
@@ -102,66 +74,15 @@ function Login() {
                 Forgot password?
               </button>
 
-              {users.length > 0 && <div className="mt-6 rounded-2xl border border-dashed border-[#d9d0bf] bg-white p-4">
-                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Demo accounts · password demo123</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {users.map((u) => (
-                    <button
-                      type="button"
-                      key={u.id}
-                      onClick={() => { setUsername(u.username); setPassword("demo123"); setError(""); }}
-                      className={cx("rounded-xl border border-line px-2.5 py-1.5 text-left text-xs hover:border-sky hover:bg-sky-soft", !u.active && "opacity-50")}
-                    >
-                      <div className="font-bold">{roles.find((r) => r.id === u.roleId)?.name}</div>
-                      <div className="text-muted">{u.username}{!u.active && " · inactive"}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>}
             </form>
           )}
 
           {mode === "forgot" && (
-            <form onSubmit={sendReset} className="space-y-4">
+            <div className="space-y-4">
               <div>
-                <h1 className="text-2xl font-semibold text-navy">Reset your password</h1>
-                <p className="text-sm text-muted">We&apos;ll send a one-time code to the email on your account.</p>
+                <h1 className="text-2xl font-semibold text-navy">Forgot your password?</h1>
+                <p className="mt-1 text-sm text-muted">Ask an administrator or the owner to reset it in <b>Users &amp; Roles</b>. They&apos;ll give you a temporary password, and you&apos;ll choose a new one when you sign in.</p>
               </div>
-              <Field label="Username or email">
-                <Input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-              </Field>
-              {error && <p className="rounded-xl bg-rose-soft px-3 py-2 text-sm font-semibold text-[#b5435e]">{error}</p>}
-              <Button className="w-full" size="lg">Send code</Button>
-              <button type="button" onClick={() => setMode("login")} className="w-full text-sm font-bold text-muted">Back to sign in</button>
-            </form>
-          )}
-
-          {mode === "reset" && (
-            <form onSubmit={doReset} className="space-y-4">
-              <div>
-                <h1 className="text-2xl font-semibold text-navy">Check your inbox</h1>
-                <p className="text-sm text-muted">Enter the 6-digit code and choose a new password. The code expires in 15 minutes.</p>
-              </div>
-              {sentCode && (
-                <div className="rounded-xl bg-sun-soft px-3 py-2 text-sm text-[#8a6510]">
-                  Demo only — the emailed code is <b className="tabular">{sentCode}</b>
-                </div>
-              )}
-              <Field label="Code">
-                <Input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" maxLength={6} />
-              </Field>
-              <Field label="New password" hint={<span className={strong ? "text-[#2f8f72]" : ""}>{strong ? "Strong enough ✓" : "8+ characters, letters and numbers"}</span>}>
-                <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
-              </Field>
-              {error && <p className="rounded-xl bg-rose-soft px-3 py-2 text-sm font-semibold text-[#b5435e]">{error}</p>}
-              <Button className="w-full" size="lg">Update password</Button>
-            </form>
-          )}
-
-          {mode === "done" && (
-            <div className="space-y-4 text-center">
-              <h1 className="text-2xl font-semibold text-navy">Password updated</h1>
-              <p className="text-sm text-muted">You can now sign in with your new password.</p>
               <Button className="w-full" onClick={() => setMode("login")}>Back to sign in</Button>
             </div>
           )}

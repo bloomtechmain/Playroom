@@ -5,7 +5,6 @@ import { format } from "date-fns";
 export interface PriceContext {
   at: Date;
   zone: Zone;
-  plan: RatePlan;
   visitors: number;
   adults: number;
   childAges: number[];
@@ -69,57 +68,6 @@ export function promoDiscount(p: Promotion, subtotal: number) {
   }
 }
 
-export function quote(
-  ctx: PriceContext,
-  rules: PriceRule[],
-  settings: Settings,
-  promo: Promotion | undefined,
-  pointsToUse: number,
-  adultFee = 0,
-) {
-  const base = ctx.plan.price * Math.max(1, ctx.visitors) + adultFee * ctx.adults;
-  const applied = rulesFor(rules, settings, ctx.zone.id, ctx.at);
-  let ruleAdjust = 0;
-  for (const r of applied) {
-    ruleAdjust += r.adjust === "percent" ? Math.round((base * r.value) / 100) : r.value * Math.max(1, ctx.visitors);
-  }
-  const subtotal = Math.max(0, base + ruleAdjust);
-  let discount = 0;
-  let bonusMinutes = 0;
-  let promoError: string | null = null;
-  if (promo) {
-    promoError = promoEligible(promo, ctx, subtotal);
-    if (!promoError) {
-      discount = promoDiscount(promo, subtotal);
-      if (promo.type === "bonus_time") bonusMinutes = promo.value;
-    }
-  }
-  const afterPromo = subtotal - discount;
-  const loyaltyValue = Math.min(afterPromo, Math.floor(pointsToUse) * settings.pointValue);
-  const total = Math.max(0, afterPromo - loyaltyValue);
-  return {
-    base,
-    applied,
-    ruleAdjust,
-    subtotal,
-    discount,
-    bonusMinutes,
-    promoError,
-    loyaltyValue,
-    pointsUsed: settings.pointValue ? Math.ceil(loyaltyValue / settings.pointValue) : 0,
-    total,
-    minutes: ctx.plan.minutes + bonusMinutes,
-  };
-}
-
-export function overtimeFor(t: Ticket, plan: RatePlan | undefined, now = new Date()) {
-  const elapsed = Math.max(0, (now.getTime() - new Date(t.checkIn).getTime()) / 60000);
-  if (!plan) return { elapsed, over: 0, blocks: 0, fee: 0 };
-  const over = Math.max(0, elapsed - t.minutes - plan.graceMinutes);
-  const blocks = over > 0 ? Math.ceil(over / plan.overtimeBlock) : 0;
-  return { elapsed, over, blocks, fee: blocks * plan.overtimePrice * Math.max(1, t.visitors) };
-}
-
 /** Is the play area locked by a full-venue party right now (or at a given time)? */
 export function lockoutAt(bookings: Booking[], at: Date) {
   const date = dkey(at);
@@ -155,21 +103,14 @@ export const hhmm = (d: Date) => format(d, "HH:mm");
 // ---------------------------------------------------------------- open-ended visits
 
 /**
- * Visits have no fixed length: at check-out the stay is charged with whichever of the zone's rate plans
- * comes out cheapest for the time actually spent — the plan's price, plus extra blocks once the plan's
- * minutes and grace period are used up.
+ * Visits have no fixed length: at check-out the time actually spent is charged in 30-minute blocks,
+ * rounded up, with one block as the minimum (1h 20m is charged as 1h 30m), at the zone's price per block.
  */
-export function bestRate(plans: RatePlan[], minutes: number) {
-  let best: { plan: RatePlan; blocks: number; perVisitor: number } | undefined;
-  for (const plan of plans) {
-    const over = Math.max(0, minutes - plan.minutes - plan.graceMinutes);
-    const blocks = over > 0 ? Math.ceil(over / Math.max(1, plan.overtimeBlock)) : 0;
-    const perVisitor = plan.price + blocks * plan.overtimePrice;
-    // on a tie prefer the plan that includes more time (reads better on the receipt)
-    if (!best || perVisitor < best.perVisitor || (perVisitor === best.perVisitor && plan.minutes > best.plan.minutes)) best = { plan, blocks, perVisitor };
-  }
-  return best;
-}
+export const BLOCK_MINUTES = 30;
+export const blocksFor = (minutes: number) => Math.max(1, Math.ceil(minutes / BLOCK_MINUTES));
+
+/** The zone's rate — one price per 30 minutes, per child (play) or per person (co-work). */
+export const zoneRate = (plans: RatePlan[], zoneId: string) => plans.find((p) => p.zoneId === zoneId && p.active);
 
 /** What one area of a visit costs if the family leaves at `now`. */
 export interface StayQuote {
@@ -178,9 +119,9 @@ export interface StayQuote {
   minutes: number;
   /** minutes actually charged (bonus-time promotions are free) */
   chargedMinutes: number;
+  /** 30-minute blocks charged */
   blocks: number;
   base: number;
-  extra: number;
   applied: PriceRule[];
   ruleAdjust: number;
   discount: number;
@@ -193,24 +134,24 @@ export interface StayQuote {
 export interface StayInput {
   ticket: Pick<Ticket, "zoneId" | "checkIn" | "visitors" | "adults">;
   zone: Zone;
-  /** the zone's active rate plans */
-  plans: RatePlan[];
+  /** the zone's active rate */
+  plan?: RatePlan;
   childAges: number[];
   member: boolean;
   priorVisits: number;
 }
 
-function priceStay(inp: StayInput, rules: PriceRule[], settings: Settings, now: Date, bonusMinutes: number, waiveExtra: boolean) {
+function priceStay(inp: StayInput, rules: PriceRule[], settings: Settings, now: Date, bonusMinutes: number) {
   const minutes = Math.max(0, Math.floor((now.getTime() - new Date(inp.ticket.checkIn).getTime()) / 60000));
   const chargedMinutes = Math.max(0, minutes - bonusMinutes);
-  const best = bestRate(inp.plans, chargedMinutes);
+  // a stay that bonus time covers completely is free; otherwise the first block is the minimum
+  const blocks = inp.plan && !(bonusMinutes && !chargedMinutes) ? blocksFor(chargedMinutes) : 0;
   const visitors = Math.max(1, inp.ticket.visitors);
-  const base = best ? best.plan.price * visitors : 0;
-  const extra = best && !waiveExtra ? best.blocks * best.plan.overtimePrice * visitors : 0;
+  const base = inp.plan ? blocks * inp.plan.price * visitors : 0;
   // day / time rules use the time the family arrived
   const applied = rulesFor(rules, settings, inp.zone.id, new Date(inp.ticket.checkIn));
   const ruleAdjust = applied.reduce((a, r) => a + (r.adjust === "percent" ? Math.round((base * r.value) / 100) : r.value * visitors), 0);
-  return { plan: best?.plan, minutes, chargedMinutes, blocks: best?.blocks ?? 0, base, extra, applied, ruleAdjust };
+  return { plan: inp.plan, minutes, chargedMinutes, blocks, base, applied, ruleAdjust };
 }
 
 /**
@@ -223,15 +164,13 @@ export function stayQuote(
   settings: Settings,
   promos: Promotion[],
   now: Date,
-  opts: { promoChoice?: string | null; waiveExtra?: boolean } = {},
+  opts: { promoChoice?: string | null } = {},
 ): StayQuote {
-  const waive = !!opts.waiveExtra;
-  const plain = priceStay(inp, rules, settings, now, 0, waive);
+  const plain = priceStay(inp, rules, settings, now, 0);
   const subtotal = Math.max(0, plain.base + plain.ruleAdjust);
   const ctx: PriceContext = {
     at: new Date(inp.ticket.checkIn),
     zone: inp.zone,
-    plan: plain.plan ?? inp.plans[0],
     visitors: inp.ticket.visitors,
     adults: inp.ticket.adults,
     childAges: inp.childAges,
@@ -241,10 +180,10 @@ export function stayQuote(
 
   const withPromo = (promo: Promotion | undefined, promoError: string | null = null): StayQuote => {
     const bonusMinutes = promo?.type === "bonus_time" ? promo.value : 0;
-    const q = bonusMinutes ? priceStay(inp, rules, settings, now, bonusMinutes, waive) : plain;
+    const q = bonusMinutes ? priceStay(inp, rules, settings, now, bonusMinutes) : plain;
     const sub = Math.max(0, q.base + q.ruleAdjust);
     const discount = promo && promo.type !== "bonus_time" ? promoDiscount(promo, sub) : 0;
-    return { ...q, discount, promo, promoError, bonusMinutes, total: Math.max(0, sub - discount) + q.extra };
+    return { ...q, discount, promo, promoError, bonusMinutes, total: Math.max(0, sub - discount) };
   };
 
   if (opts.promoChoice) {
@@ -274,7 +213,7 @@ export function stayInputFor(
   return {
     ticket: t,
     zone,
-    plans: data.ratePlans.filter((p) => p.zoneId === zone.id && p.active),
+    plan: zoneRate(data.ratePlans, zone.id),
     childAges: data.children.filter((k) => t.childIds.includes(k.id)).map((k) => ageOf(k.dob)),
     member,
     priorVisits,

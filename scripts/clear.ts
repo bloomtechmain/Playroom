@@ -14,7 +14,7 @@ import { createPool, transaction } from "../src/server/db/pool";
 const DATA_TABLES = [
   "zones", "rate_plans", "price_rules", "promotions", "customers", "children", "tickets", "transactions",
   "products", "sales", "shifts", "refunds", "party_packages", "addons", "bookings", "expenses",
-  "employees", "attendance", "payroll_runs", "activity", "backups", "password_resets",
+  "employees", "attendance", "payroll_runs", "activity", "backups",
 ];
 
 async function main() {

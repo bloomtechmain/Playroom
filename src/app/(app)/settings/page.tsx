@@ -1,12 +1,17 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CloudUpload, Database, Download, MonitorSmartphone, RotateCcw, ShieldCheck, Upload } from "lucide-react";
+import { CloudUpload, Database, Download, MonitorSmartphone, ShieldCheck, Upload } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import type { DB } from "@/lib/seed";
+import type { Settings } from "@/lib/types";
 import { fmtDT } from "@/lib/utils";
-import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Table, Textarea, Toggle, toast } from "@/components/ui";
+import { Badge, Button, Card, Field, Input, NoAccess, PageHeader, Table, Textarea, Toggle, toast } from "@/components/ui";
 import { PrinterAgentSettings } from "@/components/PrinterAgentSettings";
+
+/** Only the fields this form edits — other screens change holidays, categories, payroll and WhatsApp settings meanwhile. */
+const FORM_KEYS = ["businessName", "phone", "address", "email", "openingCash", "incomeTaxPct", "receiptFooter", "pointsPer100", "pointValue", "workStart", "standardHours", "refundNeedsApproval", "priceEditNeedsPermission"] as const;
+const formPatch = (f: Settings): Partial<Settings> => Object.fromEntries(FORM_KEYS.map((k) => [k, f[k]]));
 
 export default function SettingsPage() {
   const can = useCan();
@@ -17,12 +22,9 @@ export default function SettingsPage() {
 function Inner() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
-  const reset = useStore((s) => s.resetDemo);
   const restoreBackup = useStore((s) => s.restoreBackup);
   const backup = useStore((s) => s.backupNow);
-  const demo = useStore((s) => s.demo);
   const [f, setF] = useState(settings);
-  const [confirmReset, setConfirmReset] = useState(false);
   const file = useRef<HTMLInputElement>(null);
 
   // the snapshot is stored on the server and also handed to the browser as a file
@@ -65,6 +67,9 @@ function Inner() {
             <Field label="Address" className="sm:col-span-2"><Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
             <Field label="Email"><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
             <Field label="Opening cash & bank balance" hint="Starting point for the cash flow report"><Input type="number" value={f.openingCash} onChange={(e) => setF({ ...f, openingCash: Number(e.target.value) })} /></Field>
+            <Field label="Income tax rate on profit (%)" hint={f.incomeTaxPct ? `The P&L estimates income tax at ${f.incomeTaxPct}% of profit before tax` : "0 = the P&L shows only tax payments recorded as expenses"}>
+              <Input type="number" min={0} max={100} step="0.5" value={f.incomeTaxPct ?? 0} onChange={(e) => setF({ ...f, incomeTaxPct: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })} />
+            </Field>
             <Field label="Receipt footer" className="sm:col-span-2"><Textarea value={f.receiptFooter} onChange={(e) => setF({ ...f, receiptFooter: e.target.value })} /></Field>
           </div>
         </Card>
@@ -87,7 +92,7 @@ function Inner() {
         </div>
       </div>
       <div className="mt-4 flex justify-end">
-        <Button onClick={async () => { if (await setSettings(f, "Business settings updated")) toast("Settings saved"); }}>Save settings</Button>
+        <Button onClick={async () => { if (await setSettings(formPatch(f), "Business settings updated")) toast("Settings saved"); }}>Save settings</Button>
       </div>
 
       <div className="mt-6">
@@ -121,19 +126,9 @@ function Inner() {
             <Item icon={<ShieldCheck size={16} />} t="Full audit trail" d="Every create, edit, delete, refund and price change is written to the activity log with before → after values." />
             <Item icon={<MonitorSmartphone size={16} />} t="Multi-device" d="Front desk PC, tablet kiosk for staff QR clock-in and phones for managers." />
           </div>
-          {demo && (
-            <div className="mt-5 rounded-xl border border-dashed border-[#e0b13a] bg-sun-soft p-4">
-              <div className="text-sm font-bold text-[#8a6510]">Demo data</div>
-              <p className="mt-1 text-xs text-[#8a6510]">The server is running in demo mode. Resetting replaces everything in the database with about three months of sample history.</p>
-              <Button size="sm" variant="danger" className="mt-3" icon={<RotateCcw size={14} />} onClick={() => setConfirmReset(true)}>Reset demo data</Button>
-            </div>
-          )}
         </Card>
       </div>
 
-      <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Reset demo data?" footer={<><Button variant="secondary" onClick={() => setConfirmReset(false)}>Cancel</Button><Button variant="danger" onClick={async () => { setConfirmReset(false); if (await reset()) toast("Demo data rebuilt"); }}>Reset</Button></>}>
-        <p className="text-sm">Everything in the database will be replaced with fresh sample data, for every user and device.</p>
-      </Modal>
     </>
   );
 }

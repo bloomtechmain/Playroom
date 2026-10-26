@@ -5,8 +5,9 @@ import { uid } from "@/lib/utils";
 import type { CollectionKey, Item } from "../collections";
 import { badRequest, HttpError } from "../http";
 import { diff, type Mut } from "../mutation";
-import { hashPassword } from "../password";
+import { hashPassword, isStrongPassword } from "../password";
 import { updateBooking } from "./bookings";
+import { expenseCategories } from "@/lib/accounting";
 
 /**
  * Which permission lets a user create/edit records of a collection through the generic save.
@@ -77,6 +78,9 @@ export async function saveRecord<K extends CollectionKey>(m: Mut, key: K, item: 
         (m.actor.can("payroll.run") && !!x.payrollRunId && !existing) ||
         (m.actor.can("products.edit") && x.category === "Stock Purchases" && !existing);
       if (!ok) throw deny();
+      const cat = expenseCategories(await m.settings()).find((c) => c.name === x.category);
+      // an existing expense may keep a category that has since been hidden
+      if (!cat || (!cat.active && (existing as Expense | undefined)?.category !== x.category)) throw badRequest("Choose an expense category from the list");
       saved = (await m.put("expenses", { ...x, createdBy: (existing as Expense | undefined)?.createdBy ?? m.actor.id })) as Item<K>;
       break;
     }
@@ -118,6 +122,11 @@ async function saveUser(m: Mut, u: User, ex: User | undefined) {
   }
   if (u.roleId === "owner" && ex?.roleId !== "owner" && m.actor.roleId !== "owner") throw deny("Only the owner can grant the owner role");
   if (!(await m.find("roles", u.roleId))) throw badRequest("Unknown role");
+  if (u.employeeId && u.employeeId !== ex?.employeeId) {
+    if (!(await m.find("employees", u.employeeId))) throw badRequest("Unknown staff member");
+    if (await m.tx.one("SELECT 1 FROM users WHERE employee_id = $1 AND id <> $2", [u.employeeId, u.id])) throw badRequest("That staff member already has a login");
+  }
+  if (u.password && !isStrongPassword(u.password)) throw badRequest("Use a password of 8+ characters with letters and numbers");
 
   const passwordHash = u.password ? await hashPassword(u.password) : ex ? await currentHash(m, ex.id) : undefined;
   if (!passwordHash) throw badRequest("A password is required for new users");

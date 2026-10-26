@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, CircleAlert, Clock3, ScanLine, ShieldAlert } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
-import { stayInputFor, stayQuote, visitOf, type StayQuote } from "@/lib/pricing";
+import { BLOCK_MINUTES, stayInputFor, stayQuote, visitOf, type StayQuote } from "@/lib/pricing";
 import type { PayMethod, Ticket } from "@/lib/types";
 import { cx, fmtDT, fmtTime, minsToLabel, money } from "@/lib/utils";
 import { Badge, Button, Card, Input, NoAccess, PageHeader, Select, Table, Tabs, toast } from "@/components/ui";
@@ -31,7 +31,7 @@ function usePricer() {
   const children = useStore((s) => s.children);
   const tickets = useStore((s) => s.tickets);
   return useMemo(() => {
-    return (visit: Ticket[], now: Date, opts: { promoChoice?: string | null; waiveExtra?: boolean } = {}) => {
+    return (visit: Ticket[], now: Date, opts: { promoChoice?: string | null } = {}) => {
       const first = visit[0];
       const ids = new Set(visit.map((t) => t.id));
       const prior = tickets.filter((t) => t.customerId === first.customerId && t.status !== "cancelled" && !ids.has(t.id)).length;
@@ -93,11 +93,11 @@ function Inner() {
     [tickets, now, zoneF, price],
   );
 
-  const doCheckout = async (waive: boolean, due: number, loyalty: number, manualAmt: number) => {
+  const doCheckout = async (due: number, loyalty: number, manualAmt: number) => {
     if (!found || busy) return;
     if (due > 0 && method === "cash" && tendered && Number(tendered) < due) return toast("Cash received is less than the amount due", "err");
     setBusy(true);
-    const out = await checkout(found.id, { method, waive, points: Math.ceil(loyalty / (settings.pointValue || 1)), promoId: promoChoice, manualDiscount: manualAmt });
+    const out = await checkout(found.id, { method, points: Math.ceil(loyalty / (settings.pointValue || 1)), promoId: promoChoice, manualDiscount: manualAmt });
     setBusy(false);
     if (!out) return;
     setDone(out);
@@ -125,11 +125,6 @@ function Inner() {
             <Button>Find</Button>
           </form>
           <p className="mt-2 text-xs text-muted">USB/Bluetooth scanners type straight into this box.</p>
-          {active[0] && (
-            <button onClick={() => scan(active[active.length - 1].t.code)} className="mt-2 text-xs font-bold text-navy hover:underline">
-              Demo: try a ticket that&apos;s on the floor →
-            </button>
-          )}
         </Card>
 
         <div>
@@ -147,7 +142,7 @@ function Inner() {
               tone="mint"
               icon={<CheckCircle2 />}
               title={`Checked out · ${done[0].visitId ?? done[0].code}`}
-              text={`Total stay ${minsToLabel(done[0].minutes)}. Paid ${money(done.reduce((a, t) => a + t.paid, 0))}${done.some((t) => t.overtimeFee) ? ` incl. ${money(done.reduce((a, t) => a + t.overtimeFee, 0))} extra time` : ""}. Gate cleared.`}
+              text={`Total stay ${minsToLabel(done[0].minutes)}. Paid ${money(done.reduce((a, t) => a + t.paid, 0))}. Gate cleared.`}
             />
           )}
           {found && !done && !visit.length && (
@@ -160,7 +155,6 @@ function Inner() {
           )}
           {found && !done && visit.length > 0 && (() => {
             const lines = price(visit, now, { promoChoice });
-            const waived = price(visit, now, { promoChoice, waiveExtra: true });
             const c = customers.find((x) => x.id === found.customerId);
             const kids = children.filter((k) => visit.some((t) => t.childIds.includes(k.id)));
             const noRate = lines.find((l) => !l.q?.plan);
@@ -168,9 +162,6 @@ function Inner() {
             const manualAmt = Math.min(Number(manual) || 0, gross);
             const loyalty = Math.min(gross - manualAmt, Math.min(points, c?.points ?? 0) * settings.pointValue);
             const due = gross - manualAmt - loyalty;
-            const extra = lines.reduce((a, l) => a + (l.q?.extra ?? 0), 0);
-            const waivedGross = totalOf(waived);
-            const waivedDue = Math.max(0, waivedGross - Math.min(manualAmt, waivedGross) - Math.min(loyalty, waivedGross));
             const stay = lines[0].q?.minutes ?? 0;
             const promoErr = lines.map((l) => l.q?.promoError).find(Boolean);
             return (
@@ -194,11 +185,10 @@ function Inner() {
                           {lines.map(({ t, q }) => (
                             <div key={t.id} className="space-y-1">
                               {visit.length > 1 && <div className="pt-1 text-xs font-bold uppercase tracking-wider text-muted">{zoneName(t.zoneId)}</div>}
-                              <Row l={`${q!.plan!.name} × ${t.visitors}`} r={money(q!.base)} />
+                              <Row l={`${minsToLabel(q!.blocks * BLOCK_MINUTES)} × ${t.visitors}`} r={money(q!.base)} />
                               {q!.applied.map((r) => (
                                 <Row key={r.id} l={r.name} r={money(r.adjust === "percent" ? Math.round((q!.base * r.value) / 100) : r.value * t.visitors)} />
                               ))}
-                              {q!.extra > 0 && <Row l={`Extra time · ${q!.blocks} × ${q!.plan!.overtimeBlock} min`} r={<span className="text-[#c24f69]">{money(q!.extra)}</span>} />}
                               {q!.promo && (q!.discount > 0 || q!.bonusMinutes > 0) && (
                                 <Row l={`${q!.promo.code}${q!.bonusMinutes ? ` · ${q!.bonusMinutes} min free` : ""}`} r={<span className="text-[#2f8f72]">{q!.discount ? `-${money(q!.discount)}` : "applied"}</span>} />
                               )}
@@ -239,14 +229,9 @@ function Inner() {
                             <PaymentPicker method={method} onMethod={setMethod} total={due} tendered={tendered} onTendered={setTendered} walletBalance={c?.wallet} />
                           </div>
                         )}
-                        <Button size="lg" variant={due > 0 ? "primary" : "success"} className="mt-4 w-full" disabled={busy} onClick={() => doCheckout(false, due, loyalty, manualAmt)}>
+                        <Button size="lg" variant={due > 0 ? "primary" : "success"} className="mt-4 w-full" disabled={busy} onClick={() => doCheckout(due, loyalty, manualAmt)}>
                           {due > 0 ? `Collect ${money(due)} & check out` : "Check out"}
                         </Button>
-                        {extra > 0 && can("price.override") && (
-                          <Button variant="ghost" size="sm" className="mt-2 w-full" disabled={busy} onClick={() => doCheckout(true, waivedDue, Math.min(loyalty, waivedGross), manualAmt)}>
-                            Waive extra time (manager) & collect {money(waivedDue)}
-                          </Button>
-                        )}
                       </>
                     )}
                   </div>

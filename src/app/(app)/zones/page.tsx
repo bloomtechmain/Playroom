@@ -5,7 +5,8 @@ import { Lock, Pencil, Plus } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useStore, useCan } from "@/lib/store";
 import { useOccupancy } from "@/lib/hooks";
-import type { Zone } from "@/lib/types";
+import { BLOCK_MINUTES, zoneRate } from "@/lib/pricing";
+import type { RatePlan, Zone } from "@/lib/types";
 import { cx, money, today, uid } from "@/lib/utils";
 import { localDay } from "@/lib/accounting";
 import { Badge, Button, Card, Field, Input, Meter, Modal, NoAccess, PageHeader, Select, Textarea, Toggle, toast, toneCls, type Tone } from "@/components/ui";
@@ -22,6 +23,7 @@ function Inner() {
   const zones = useStore((s) => s.zones);
   const tickets = useStore((s) => s.tickets);
   const bookings = useStore((s) => s.bookings);
+  const ratePlans = useStore((s) => s.ratePlans);
   const save = useStore((s) => s.save);
   const [edit, setEdit] = useState<Zone | null>(null);
 
@@ -49,7 +51,7 @@ function Inner() {
       <PageHeader
         title="Zones & Capacity"
         subtitle="Each zone runs on its own capacity, hours and alert threshold."
-        actions={can("zones.edit") && <Button icon={<Plus size={16} />} onClick={() => setEdit({ id: "", name: "", kind: "play", capacity: 20, nearFullPct: 80, openTime: "09:00", closeTime: "20:00", basePrice: 1000, rules: "", active: true, color: "teal" })}>Add zone</Button>}
+        actions={can("zones.edit") && <Button icon={<Plus size={16} />} onClick={() => setEdit({ id: "", name: "", kind: "play", capacity: 20, nearFullPct: 80, openTime: "09:00", closeTime: "20:00", rules: "", active: true, color: "teal" })}>Add zone</Button>}
       />
       <div className="grid gap-4 lg:grid-cols-3">
         {occ.map((o) => {
@@ -83,8 +85,8 @@ function Inner() {
                 <Meter value={o.inside} max={o.zone.capacity} warnAt={o.zone.nearFullPct / 100} />
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-y-1.5 text-sm">
-                <dt className="text-muted">Base price</dt>
-                <dd className="text-right">{o.zone.kind === "party" ? "Package based" : `${money(o.zone.basePrice)}/hr`}</dd>
+                <dt className="text-muted">Price</dt>
+                <dd className="text-right">{o.zone.kind === "party" ? "Package based" : rateLabel(zoneRate(ratePlans, o.zone.id))}</dd>
                 {o.zone.minAge != null && (
                   <>
                     <dt className="text-muted">Ages</dt>
@@ -145,6 +147,12 @@ function Inner() {
   );
 }
 
+/** The zone's price as set in Pricing → Rate plans. */
+function rateLabel(plan: RatePlan | undefined) {
+  if (!plan) return <span className="text-muted">No rate — set one in Pricing</span>;
+  return `${money(plan.price)} / ${BLOCK_MINUTES} min`;
+}
+
 function ZoneForm({ zone, onClose, onSave }: { zone: Zone; onClose: () => void; onSave: (z: Zone) => void }) {
   const [z, setZ] = useState(zone);
   const set = <K extends keyof Zone>(k: K, v: Zone[K]) => setZ({ ...z, [k]: v });
@@ -169,7 +177,6 @@ function ZoneForm({ zone, onClose, onSave }: { zone: Zone; onClose: () => void; 
         <Field label="Near-full alert at (%)"><Input type="number" value={z.nearFullPct} onChange={(e) => set("nearFullPct", Number(e.target.value))} /></Field>
         <Field label="Opens"><Input type="time" value={z.openTime} onChange={(e) => set("openTime", e.target.value)} /></Field>
         <Field label="Closes"><Input type="time" value={z.closeTime} onChange={(e) => set("closeTime", e.target.value)} /></Field>
-        <Field label="Baseline price / hour (Rs.)" hint="Detailed rates are under Pricing & Promos"><Input type="number" value={z.basePrice} onChange={(e) => set("basePrice", Number(e.target.value))} /></Field>
         <Field label="Colour">
           <Select value={z.color} onChange={(e) => set("color", e.target.value)}>
             {["sky", "lilac", "mint", "rose", "sun", "teal"].map((c) => <option key={c}>{c}</option>)}

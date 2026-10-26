@@ -4,11 +4,11 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { addDays, format } from "date-fns";
 import { QRCodeSVG } from "qrcode.react";
-import { Cake, Check, ChevronLeft, CreditCard, Lock, PartyPopper, Smile } from "lucide-react";
+import { Cake, Check, ChevronLeft, Lock, PartyPopper, Smile } from "lucide-react";
 import { useBoot, useLiveSync, useStore } from "@/lib/store";
 import { useHydrated } from "@/lib/hooks";
 import { bookingConflict, partyPrice, toHHMM } from "@/lib/booking";
-import { rulesFor } from "@/lib/pricing";
+import { blocksFor, rulesFor, zoneRate } from "@/lib/pricing";
 import type { Booking } from "@/lib/types";
 import { cx, money, timeToMin } from "@/lib/utils";
 import { Logo } from "@/components/Shell";
@@ -38,9 +38,9 @@ function Book() {
   const [step, setStep] = useState(0);
   const play = zones.find((z) => z.kind === "play" && z.active);
   const room = zones.find((z) => z.kind === "party" && z.active);
-  const hourPlan = plans.find((p) => p.zoneId === play?.id && p.unit === "hour");
+  const rate = play && zoneRate(plans, play.id);
   // only offer what the venue has set up
-  const canPlay = !!play && !!hourPlan;
+  const canPlay = !!play && !!rate;
   const canParty = !!room && packages.some((p) => p.active);
   const [kind, setKind] = useState<Kind>(canParty ? "party" : "play");
   const [date, setDate] = useState(format(addDays(new Date(), 3), "yyyy-MM-dd"));
@@ -78,12 +78,12 @@ function Book() {
   const slot = slots.find((s) => s.start === start && !s.reason);
   const price = kind === "party" && pkg ? partyPrice(pkg, mode, guests, sel, addons) : null;
   const playPrice = useMemo(() => {
-    if (kind !== "play" || !hourPlan || !play) return 0;
+    if (kind !== "play" || !rate || !play) return 0;
     const at = new Date(`${date}T${start || "10:00"}:00`);
-    const base = hourPlan.price * hours * kids;
+    const base = rate.price * blocksFor(hours * 60) * kids;
     const adj = rulesFor(rules, settings, play.id, at).reduce((a, r) => a + (r.adjust === "percent" ? (base * r.value) / 100 : r.value * kids), 0);
     return Math.round((base + adj) * 0.9);
-  }, [kind, hourPlan, date, start, hours, kids, rules, settings, play]);
+  }, [kind, rate, date, start, hours, kids, rules, settings, play]);
   const total = price ? price.total : playPrice;
   const deposit = price ? price.deposit : Math.round(total * 0.3);
 
@@ -116,16 +116,16 @@ function Book() {
       <Frame>
         <div className="mx-auto max-w-md rounded-[28px] border border-line bg-white p-8 text-center shadow-sm">
           <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-mint-soft text-[#2f8f72]"><Check size={28} /></div>
-          <h1 className="mt-4 text-3xl font-semibold text-navy">You&apos;re booked!</h1>
-          <p className="mt-1 text-muted">We&apos;ve sent the confirmation to {done && contact.phone}{contact.email && ` and ${contact.email}`}.</p>
+          <h1 className="mt-4 text-3xl font-semibold text-navy">Booking requested</h1>
+          <p className="mt-1 text-muted">Your slot is held. Pay the {money(done.deposit)} deposit at the venue to confirm it, and keep this reference.</p>
           <div className="my-5 flex justify-center"><QRCodeSVG value={done.ref} size={150} fgColor="#24395f" /></div>
           <div className="font-mono text-xl font-bold">{done.ref}</div>
           <div className="mt-4 space-y-1 rounded-2xl bg-[#faf7f1] p-4 text-left text-sm">
             <Row l="Date" r={format(new Date(done.date + "T00:00"), "EEEE, d MMMM")} />
             <Row l="Time" r={`${done.start} – ${done.end}`} />
             <Row l="Booking" r={done.kind === "party" ? `${pkg?.name} · ${done.mode === "full" ? "Whole venue" : "Party room"}` : `Play visit · ${kids} kids`} />
-            <Row l="Deposit paid" r={money(done.paid)} />
-            <Row l="Balance on the day" r={money(done.total - done.paid)} />
+            <Row l="Deposit to confirm" r={money(done.deposit)} />
+            <Row l="Total" r={money(done.total)} />
           </div>
           <button onClick={() => { setDone(null); setStep(0); setStart(""); }} className="mt-5 text-sm font-bold text-navy hover:underline">Make another booking</button>
         </div>
@@ -235,7 +235,7 @@ function Book() {
                   <div className="text-sm text-muted">Total</div>
                   <div className="font-display text-3xl font-semibold">{money(total)}</div>
                 </div>
-                <div className="text-right text-sm">Deposit today <b className="block font-display text-xl">{money(deposit)}</b></div>
+                <div className="text-right text-sm">Deposit to confirm <b className="block font-display text-xl">{money(deposit)}</b></div>
               </div>
             </div>
           )}
@@ -248,7 +248,7 @@ function Book() {
               <div className="rounded-2xl bg-[#faf7f1] p-4 text-sm sm:col-span-2">
                 <Row l="When" r={`${format(new Date(date + "T00:00"), "EEE d MMM")} · ${slot?.start}–${slot?.end}`} />
                 <Row l="Total" r={money(total)} />
-                <Row l="Deposit now" r={<b>{money(deposit)}</b>} />
+                <Row l="Deposit to confirm" r={<b>{money(deposit)}</b>} />
               </div>
             </div>
           )}
@@ -259,13 +259,13 @@ function Book() {
               <button disabled={!canNext} onClick={() => setStep(step + 1)} className="rounded-2xl bg-navy px-7 py-3 font-bold text-white shadow-[0_3px_0_#22416f] disabled:opacity-40">Continue</button>
             ) : (
               <button disabled={!canNext || paying} onClick={confirm} className="flex items-center gap-2 rounded-2xl bg-[#3aa985] px-7 py-3 font-bold text-white shadow-[0_3px_0_#2a7e63] disabled:opacity-50">
-                {paying ? "Processing payment…" : <><CreditCard size={18} /> Pay {money(deposit)} deposit</>}
+                {paying ? "Sending…" : <><Check size={18} /> Request booking</>}
               </button>
             )}
           </div>
         </div>
         {error && <p className="mx-auto mt-4 max-w-md rounded-xl bg-rose-soft px-3 py-2 text-center text-sm font-bold text-[#a63a54]">{error}</p>}
-        <p className="mt-4 text-center text-xs text-muted">Secure card payment (simulated for this demo). Free cancellation up to 7 days before.</p>
+        <p className="mt-4 text-center text-xs text-muted">Nothing is charged online. Your slot is held, and it&apos;s confirmed once the deposit is paid at the venue. Free cancellation up to 7 days before.</p>
       </div>
     </Frame>
   );

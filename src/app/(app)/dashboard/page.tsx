@@ -7,7 +7,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Baby, Gauge, TrendingUp, TrendingDown, CalendarClock, Megaphone, ArrowRight } from "lucide-react";
 import { useStore, useCan, useMe } from "@/lib/store";
 import { useAlerts, useOccupancy } from "@/lib/hooks";
-import { dailySeries, localDay } from "@/lib/accounting";
+import { dailySeries, expenseCategories, localDay, sectionOf } from "@/lib/accounting";
 import { Badge, Card, Meter, NoAccess, PageHeader, Stat, toneCls, Button } from "@/components/ui";
 import { cx, money, methodLabel, shortMoney, today, timeToMin } from "@/lib/utils";
 
@@ -26,6 +26,8 @@ function Exec() {
   const customers = useStore((s) => s.customers);
   const packages = useStore((s) => s.packages);
   const tickets = useStore((s) => s.tickets);
+  const settings = useStore((s) => s.settings);
+  const cats = useMemo(() => expenseCategories(settings), [settings]);
   const occ = useOccupancy();
   const alerts = useAlerts();
   const d = today();
@@ -35,18 +37,18 @@ function Exec() {
     const revenue = todayTx.reduce((a, t) => a + t.amount, 0);
     const yTx = tx.filter((t) => localDay(t.at) === format(subDays(new Date(), 7), "yyyy-MM-dd") && t.type !== "topup");
     const lastWeek = yTx.reduce((a, t) => a + t.amount, 0);
-    const exp = expenses.filter((e) => e.date === d && !["Equipment (Capex)", "Owner Drawings"].includes(e.category)).reduce((a, e) => a + e.amount, 0);
+    const exp = expenses.filter((e) => e.date === d && !["capex", "drawings"].includes(sectionOf(cats, e.category))).reduce((a, e) => a + e.amount, 0);
     const pending = bookings.filter((b) => b.kind === "party" && (b.status === "confirmed" || b.status === "pending") && b.date >= d);
     const pendingBal = pending.reduce((a, b) => a + (b.total - b.paid), 0);
     const mix: Record<string, number> = {};
     todayTx.filter((t) => t.amount > 0).forEach((t) => (mix[t.method] = (mix[t.method] ?? 0) + t.amount));
     const visitsToday = tickets.filter((t) => localDay(t.checkIn) === d && t.status !== "cancelled").reduce((a, t) => a + t.visitors, 0);
     return { revenue, lastWeek, exp, pendingBal, pendingCount: pending.length, mix, visitsToday };
-  }, [tx, expenses, bookings, tickets, d]);
+  }, [tx, expenses, bookings, tickets, d, cats]);
 
   const series = useMemo(
-    () => dailySeries(tx, expenses, { from: format(subDays(new Date(), 13), "yyyy-MM-dd"), to: d }).map((r) => ({ ...r, label: format(new Date(r.day + "T00:00"), "d MMM") })),
-    [tx, expenses, d],
+    () => dailySeries(tx, expenses, { from: format(subDays(new Date(), 13), "yyyy-MM-dd"), to: d }, cats).map((r) => ({ ...r, label: format(new Date(r.day + "T00:00"), "d MMM") })),
+    [tx, expenses, d, cats],
   );
 
   const play = occ.find((o) => o.zone.kind === "play");

@@ -63,7 +63,6 @@ export function TicketReceipt({ tickets, copy }: { tickets: Ticket[]; copy?: boo
   const customers = useStore((s) => s.customers);
   const children = useStore((s) => s.children);
   const zones = useStore((s) => s.zones);
-  const plans = useStore((s) => s.ratePlans);
   const promos = useStore((s) => s.promotions);
   const users = useStore((s) => s.users);
   const settings = useStore((s) => s.settings);
@@ -90,7 +89,6 @@ export function TicketReceipt({ tickets, copy }: { tickets: Ticket[]; copy?: boo
       <Row l="Time spent" r={minsToLabel(stayMinutes(t))} b />
       {tickets.map((x) => {
         const z = zones.find((y) => y.id === x.zoneId);
-        const p = plans.find((y) => y.id === x.ratePlanId);
         const pr = promos.find((y) => y.id === x.promoId);
         return (
           <div key={x.id}>
@@ -99,7 +97,7 @@ export function TicketReceipt({ tickets, copy }: { tickets: Ticket[]; copy?: boo
               {z?.name} · {x.visitors}
               {z?.kind === "play" ? ` kid(s)${x.adults ? ` + ${x.adults} adult(s)` : ""}` : " person(s)"}
             </div>
-            <Row l={`${p?.name ?? "Time"} x ${x.visitors}`} r={n(x.base)} />
+            <Row l={`Time x ${x.visitors}`} r={n(x.base)} />
             {x.ruleAdjust !== 0 && <Row l={x.ruleNames.join(", ") || "Rate rules"} r={n(x.ruleAdjust)} />}
             {x.overtimeFee > 0 && <Row l="Extra time" r={n(x.overtimeFee)} />}
             {x.discount > 0 && <Row l={pr ? `Promo ${pr.code}` : "Discount"} r={`-${n(x.discount)}`} />}

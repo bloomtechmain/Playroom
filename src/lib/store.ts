@@ -5,7 +5,7 @@ import { create } from "zustand";
 import type { DB } from "./seed";
 import type { Collections, CollectionKey, Item, Patch } from "./patch";
 import { NEWEST_FIRST } from "./patch";
-import type { Booking, PayMethod, RefundRequest, Sale, Settings, Ticket } from "./types";
+import type { Booking, Employee, PayMethod, RefundRequest, Sale, Settings, Ticket, User } from "./types";
 import { toast } from "@/components/ui";
 
 export type { CollectionKey } from "./patch";
@@ -41,7 +41,6 @@ interface State extends Collections {
   ready: boolean;
   scope?: Scope;
   rev: number;
-  demo: boolean;
 
   // loading & sync
   boot: (scope: Scope) => Promise<void>;
@@ -51,10 +50,7 @@ interface State extends Collections {
   // auth
   login: (username: string, password: string) => Promise<string | null>;
   logout: () => Promise<void>;
-  switchUser: (userId: string) => Promise<void>;
   changePassword: (current: string, next: string) => Promise<string | null>;
-  requestPasswordReset: (who: string) => Promise<{ error?: string; code?: string }>;
-  resetPassword: (who: string, code: string, password: string) => Promise<string | null>;
 
   // generic records (optimistic)
   log: (module: string, action: string, detail: string, before?: string, after?: string) => Promise<boolean>;
@@ -65,7 +61,6 @@ interface State extends Collections {
   // admin
   backupNow: () => Promise<DB | null>;
   restoreBackup: (snapshot: DB, fileName: string) => Promise<boolean>;
-  resetDemo: () => Promise<boolean>;
 
   // money
   openShift: (float: number) => Promise<boolean>;
@@ -76,7 +71,7 @@ interface State extends Collections {
   /** check in to one or two areas (play / co-work); returns one ticket per area */
   checkIn: (input: { customerId: string; childIds: string[]; adults: number; areas: { zoneId: string; visitors: number }[] }) => Promise<Ticket[] | null>;
   /** check out the whole visit; returns its tickets as charged */
-  checkoutVisit: (id: string, opts: { method: PayMethod; waive?: boolean; points?: number; promoId?: string | null; manualDiscount?: number }) => Promise<Ticket[] | null>;
+  checkoutVisit: (id: string, opts: { method: PayMethod; points?: number; promoId?: string | null; manualDiscount?: number }) => Promise<Ticket[] | null>;
   cancelTicket: (id: string, reason: string, refundMethod?: PayMethod) => Promise<boolean>;
   reprintTicket: (id: string) => Promise<boolean>;
 
@@ -99,6 +94,8 @@ interface State extends Collections {
 
   // hr
   clockByToken: (token: string) => Promise<ClockResult>;
+  /** save an employee, optionally creating their login; the one-time password comes back once */
+  saveStaff: (employee: Employee, login?: { username: string; roleId: string; email: string }) => Promise<{ employee: Employee; user?: User; tempPassword?: string } | null>;
 }
 
 const EMPTY: Collections = {
@@ -190,7 +187,6 @@ export const useStore = create<State>()((set, get) => {
     ready: false,
     scope: undefined,
     rev: 0,
-    demo: false,
 
     boot: async (scope) => {
       if (get().scope === scope && get().ready) return;
@@ -199,8 +195,7 @@ export const useStore = create<State>()((set, get) => {
         if (scope === "app") {
           await get().refresh();
         } else if (scope === "login") {
-          const d = await api<{ users: Collections["users"]; roles: Collections["roles"] }>("/api/auth/demo-accounts");
-          set({ ...EMPTY, users: d.users, roles: d.roles, currentUserId: undefined, demo: d.users.length > 0 });
+          set({ ...EMPTY, currentUserId: undefined });
         } else if (scope === "public") {
           const d = await api<Partial<Collections> & { settings: Partial<Settings> }>("/api/public/booking");
           set({ ...EMPTY, ...d, settings: { ...EMPTY_SETTINGS, ...d.settings } as Settings, currentUserId: undefined });
@@ -227,8 +222,8 @@ export const useStore = create<State>()((set, get) => {
         return;
       }
       try {
-        const s = await api<{ rev: number; currentUserId: string; demo: boolean; data: Collections & { settings: Settings } }>("/api/state");
-        set({ ...s.data, currentUserId: s.currentUserId, rev: s.rev, demo: s.demo });
+        const s = await api<{ rev: number; currentUserId: string; data: Collections & { settings: Settings } }>("/api/state");
+        set({ ...s.data, currentUserId: s.currentUserId, rev: s.rev });
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) set({ ...EMPTY, currentUserId: undefined });
         else throw e;
@@ -268,14 +263,6 @@ export const useStore = create<State>()((set, get) => {
       await api("/api/auth/logout", { body: {} }).catch(() => undefined);
       set({ ...EMPTY, settings: EMPTY_SETTINGS, currentUserId: undefined, scope: undefined, ready: false, rev: 0 });
     },
-    switchUser: async (userId) => {
-      try {
-        await api("/api/auth/switch", { body: { userId } });
-        await get().refresh();
-      } catch (e) {
-        fail(e);
-      }
-    },
     changePassword: async (current, next) => {
       try {
         const out = await enqueue(() => api<ApiResult<unknown>>("/api/auth/password", { body: { current, next } }));
@@ -283,21 +270,6 @@ export const useStore = create<State>()((set, get) => {
         return null;
       } catch (e) {
         return e instanceof Error ? e.message : "Couldn't change the password";
-      }
-    },
-    requestPasswordReset: async (who) => {
-      try {
-        return await api<{ code?: string }>("/api/auth/forgot", { body: { who } });
-      } catch (e) {
-        return { error: e instanceof Error ? e.message : "Couldn't send a code" };
-      }
-    },
-    resetPassword: async (who, code, password) => {
-      try {
-        await api("/api/auth/reset", { body: { who, code, password } });
-        return null;
-      } catch (e) {
-        return e instanceof Error ? e.message : "Couldn't reset the password";
       }
     },
 
@@ -331,11 +303,6 @@ export const useStore = create<State>()((set, get) => {
       if (ok) await get().refresh();
       return ok;
     },
-    resetDemo: async () => {
-      const ok = (await act("/api/demo/reset")) !== null;
-      if (ok) await get().refresh();
-      return ok;
-    },
 
     openShift: async (float) => (await act("/api/shifts/open", { float })) !== null,
     closeShift: async (counted, notes) => (await act<string>("/api/shifts/close", { counted, notes })) ?? undefined,
@@ -366,6 +333,7 @@ export const useStore = create<State>()((set, get) => {
       }
     },
 
+    saveStaff: (employee, login) => act("/api/staff", { employee, login }),
     clockByToken: async (token) => {
       try {
         const r = await enqueue(() => api<ClockResult>("/api/kiosk/clock", { body: { token } }));

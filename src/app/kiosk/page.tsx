@@ -22,7 +22,6 @@ function Kiosk() {
   const employees = useStore((s) => s.employees);
   const attendance = useStore((s) => s.attendance);
   const [res, setRes] = useState<(ClockResult & { at: number }) | null>(null);
-  const [demo, setDemo] = useState(false);
   useLiveSync(15000);
 
   useEffect(() => {
@@ -103,19 +102,6 @@ function Kiosk() {
                 </div>
               )}
             </div>
-          </div>
-
-          <div className="mt-8">
-            <button onClick={() => setDemo(!demo)} className="text-sm font-bold text-navy hover:underline">{demo ? "Hide" : "Show"} demo badges (tap to simulate a scan)</button>
-            {demo && employees.some((e) => e.qrToken) && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {employees.filter((e) => e.active).map((e) => (
-                  <button key={e.id} onClick={() => scan(`PLAYROOM-STAFF:${e.qrToken}`)} className="flex items-center gap-2 rounded-full border border-line bg-white py-1 pl-1 pr-3 text-sm font-bold hover:border-sky">
-                    <Avatar name={e.name} size={26} /> {e.name.split(" ")[0]}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 

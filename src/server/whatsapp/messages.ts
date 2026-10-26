@@ -1,5 +1,5 @@
 import { differenceInYears, format, parseISO } from "date-fns";
-import type { Child, Customer, RatePlan, Settings, Ticket, Zone } from "@/lib/types";
+import type { Child, Customer, Settings, Ticket, Zone } from "@/lib/types";
 import { fmtTime, methodLabel, minsToLabel, money, uid } from "@/lib/utils";
 import { normalizePhone, renderTemplate, whatsappSettings, type Audience, type WaMessageKind } from "@/lib/whatsapp";
 import type { Sql } from "../db/pool";
@@ -51,7 +51,6 @@ export async function queueReceipt(
   customer: Customer,
   tickets: Ticket[],
   zones: Zone[],
-  plans: RatePlan[],
   method: string,
   by: string,
 ) {
@@ -62,9 +61,8 @@ export async function queueReceipt(
   const lines = [`*${settings.businessName}* — receipt ${t.visitId ?? t.code}`, `In ${fmtTime(t.checkIn)} · Out ${fmtTime(t.checkOut!)} · ${minsToLabel(t.minutes)}`];
   for (const x of tickets) {
     const z = zones.find((y) => y.id === x.zoneId);
-    const p = plans.find((y) => y.id === x.ratePlanId);
     lines.push("", `*${z?.name ?? ""}* · ${x.visitors} ${z?.kind === "play" ? (x.visitors === 1 ? "kid" : "kids") : x.visitors === 1 ? "person" : "people"}`);
-    lines.push(`${p?.name ?? "Time"} × ${x.visitors} — ${money(x.base)}`);
+    lines.push(`Time × ${x.visitors} — ${money(x.base)}`);
     if (x.ruleAdjust) lines.push(`${x.ruleNames.join(", ") || "Rate rules"} — ${money(x.ruleAdjust)}`);
     if (x.overtimeFee) lines.push(`Extra time — ${money(x.overtimeFee)}`);
     if (x.discount) lines.push(`Discount — -${money(x.discount)}`);

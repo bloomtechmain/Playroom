@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LayoutGrid, Ticket, ScanLine, Shapes, Tags, ShoppingBasket, Package, Wallet, RotateCcw, Users, CalendarHeart,
-  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X, Repeat,
+  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X,
 } from "lucide-react";
 import { useStore, useMe, useCan, useMyShift, useBoot, useLiveSync } from "@/lib/store";
 import { useAlerts, useHydrated, useNow } from "@/lib/hooks";
@@ -180,15 +180,12 @@ function Frame({ children }: { children: ReactNode }) {
 function TopBar({ onMenu }: { onMenu: () => void }) {
   const me = useMe()!;
   const roles = useStore((s) => s.roles);
-  const users = useStore((s) => s.users);
   const logout = useStore((s) => s.logout);
-  const switchUser = useStore((s) => s.switchUser);
-  const demo = useStore((s) => s.demo);
   const alerts = useAlerts();
   const shift = useMyShift();
   const now = useNow(15000);
   const router = useRouter();
-  const [menu, setMenu] = useState<null | "alerts" | "user" | "switch">(null);
+  const [menu, setMenu] = useState<null | "alerts" | "user">(null);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setMenu(null);
@@ -196,12 +193,6 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const role = roles.find((r) => r.id === me.roleId);
-
-  const switchTo = async (id: string) => {
-    setMenu(null);
-    await switchUser(id);
-    router.push("/dashboard");
-  };
 
   return (
     <header ref={ref} className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-paper/90 px-4 backdrop-blur sm:px-6 lg:px-8 no-print">
@@ -224,25 +215,6 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <span className={cx("h-2 w-2 rounded-full", shift ? "bg-[#3aa985]" : "bg-[#c9c1b2]")} />
         {shift ? `Shift open since ${fmtTime(shift.openedAt)}` : "No shift open"}
       </Link>
-
-      {demo && <div className="relative">
-        <button onClick={() => setMenu(menu === "switch" ? null : "switch")} className="flex items-center gap-1.5 rounded-xl border border-dashed border-[#d6cdbd] px-3 py-1.5 text-xs font-bold text-muted hover:bg-white">
-          <Repeat size={14} /> <span className="hidden sm:inline">Demo: switch role</span>
-        </button>
-        {menu === "switch" && (
-          <div className="absolute right-0 top-11 w-72 rounded-2xl border border-line bg-white p-2 shadow-xl">
-            <p className="px-2 pb-1.5 pt-1 text-xs text-muted">See how the system looks for each role.</p>
-            {users
-              .filter((u) => u.active)
-              .map((u) => (
-                <button key={u.id} onClick={() => switchTo(u.id)} className={cx("flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm hover:bg-[#f6f2eb]", u.id === me.id && "bg-sky-soft")}>
-                  <span className="font-bold">{u.name}</span>
-                  <span className="text-xs text-muted">{roles.find((r) => r.id === u.roleId)?.name}</span>
-                </button>
-              ))}
-          </div>
-        )}
-      </div>}
 
       <div className="relative">
         <button onClick={() => setMenu(menu === "alerts" ? null : "alerts")} className="relative rounded-xl p-2 text-muted hover:bg-white">

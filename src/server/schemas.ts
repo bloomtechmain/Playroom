@@ -10,9 +10,6 @@ export const payMethod = z.enum(["cash", "card", "transfer", "digital", "wallet"
 
 export const loginBody = z.object({ username: text(100), password: text(200) });
 export const passwordBody = z.object({ current: text(200), next: text(200) });
-export const forgotBody = z.object({ who: text(200) });
-export const resetBody = z.object({ who: text(200), code: text(10), password: text(200) });
-export const switchBody = z.object({ userId: id });
 
 export const logBody = z.object({ module: text(60), action: text(80), detail: text(), before: text().optional(), after: text().optional() });
 
@@ -34,7 +31,6 @@ export const checkInBody = z.object({
 
 export const checkoutBody = z.object({
   method: payMethod,
-  waive: z.boolean().default(false),
   points: z.number().int().min(0).default(0),
   /** null = best automatic promotion, "" = none */
   promoId: z.string().max(100).nullable().optional(),
@@ -113,3 +109,8 @@ export const publicBookingBody = z.object({
 });
 
 export const clockBody = z.object({ token: text(300) });
+
+export const staffBody = z.object({
+  employee: z.record(z.string(), z.unknown()).and(z.object({ id, name: text(120) })),
+  login: z.object({ username: text(60), roleId: id, email: text(200) }).optional(),
+});

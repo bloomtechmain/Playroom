@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
-import { stayQuote } from "@/lib/pricing";
+import { BLOCK_MINUTES, blocksFor, stayQuote, zoneRate } from "@/lib/pricing";
 import type { PriceRule, Promotion, RatePlan } from "@/lib/types";
 import { cx, minsToLabel, money, today, uid } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Select, SetupNeeded, Table, Tabs, Toggle, toast, type Tone } from "@/components/ui";
@@ -50,64 +50,66 @@ function Rates() {
   const save = useStore((s) => s.save);
   const remove = useStore((s) => s.remove);
   const [edit, setEdit] = useState<RatePlan | null>(null);
+  const zoneOf = (id: string) => zones.find((z) => z.id === id);
+  const per = (zoneId: string) => (zoneOf(zoneId)?.kind === "play" ? "child" : "person");
   return (
     <>
       <p className="mb-4 rounded-xl bg-sky-soft px-4 py-2.5 text-sm text-[#3570ad]">
-        Visitors don&apos;t pick a rate at check-in. At check-out the time actually spent is charged with whichever rate below comes out cheapest — its price, plus the extra-time price per block once its minutes and grace period are used up.
+        Each zone has one price per {BLOCK_MINUTES} minutes. At check-out the time actually spent is rounded up to the next {BLOCK_MINUTES} minutes — {BLOCK_MINUTES} minutes is the minimum, and a 1h 20m stay is charged as 1h 30m.
       </p>
       {!zones.some((z) => z.kind !== "party") && <SetupNeeded title="No zones to price yet" hint="Rates belong to a play area or co-work zone. Add one first; party rooms are priced through party packages." href="/zones" cta="Go to Zones & Capacity" />}
       <div className="grid gap-5 lg:grid-cols-2">
-        {zones.filter((z) => z.kind !== "party").map((z) => (
-          <Card key={z.id} title={z.name} pad={false} action={<Button size="sm" variant="soft" icon={<Plus size={14} />} onClick={() => setEdit({ id: "", zoneId: z.id, name: "", unit: "custom", minutes: 90, price: 2000, graceMinutes: 10, overtimeBlock: 15, overtimePrice: 300, active: true })}>Add rate</Button>}>
-            <Table head={["Rate", "Interval", "Price", "Grace", "Overtime", ""]}>
-              {plans.filter((p) => p.zoneId === z.id).map((p) => (
-                <tr key={p.id} className={cx(!p.active && "opacity-50")}>
-                  <td className="font-bold">{p.name}</td>
-                  <td><Badge tone={p.unit === "hour" ? "sky" : p.unit === "half" ? "mint" : "lilac"}>{p.unit === "half" ? "Half-hourly" : p.unit === "hour" ? "Hourly" : "Custom"} · {minsToLabel(p.minutes)}</Badge></td>
-                  <td className="tabular">{money(p.price)}</td>
-                  <td className="tabular text-muted">{p.graceMinutes}m</td>
-                  <td className="tabular text-muted">{money(p.overtimePrice)}/{p.overtimeBlock}m</td>
-                  <td className="text-right">
-                    <button onClick={() => setEdit(p)} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><Pencil size={14} /></button>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          </Card>
-        ))}
+        {zones.filter((z) => z.kind !== "party").map((z) => {
+          const rate = plans.find((p) => p.zoneId === z.id);
+          return (
+            <Card
+              key={z.id}
+              title={z.name}
+              action={rate
+                ? <Button size="sm" variant="soft" icon={<Pencil size={14} />} onClick={() => setEdit(rate)}>Edit rate</Button>
+                : <Button size="sm" variant="soft" icon={<Plus size={14} />} onClick={() => setEdit({ id: "", zoneId: z.id, price: 0, active: true })}>Add rate</Button>}
+            >
+              {rate ? (
+                <>
+                  <div className="font-display text-2xl font-semibold tabular">{money(rate.price)} <span className="text-sm font-normal text-muted">per {BLOCK_MINUTES} min, per {per(z.id)}</span></div>
+                  <RateExamples price={rate.price} />
+                </>
+              ) : (
+                <p className="text-sm text-muted">No rate yet — visitors can&apos;t be checked out of this zone until it has one.</p>
+              )}
+            </Card>
+          );
+        })}
       </div>
       {edit && (
         <Modal
           open
           onClose={() => setEdit(null)}
-          title={edit.id ? `Edit rate · ${edit.name}` : "New rate"}
+          title={`${edit.id ? "Edit" : "New"} rate · ${zoneOf(edit.zoneId)?.name ?? ""}`}
           footer={
             <>
-              {edit.id && <Button variant="ghost" className="mr-auto text-[#c24f69]" onClick={() => { remove("ratePlans", edit.id, "Pricing", `Rate ${edit.name}`); setEdit(null); }}>Delete</Button>}
+              {edit.id && <Button variant="ghost" className="mr-auto text-[#c24f69]" onClick={() => { remove("ratePlans", edit.id, "Pricing", `Rate ${zoneOf(edit.zoneId)?.name ?? ""}`); setEdit(null); }}>Delete</Button>}
               <Button variant="secondary" onClick={() => setEdit(null)}>Cancel</Button>
-              <Button onClick={() => { const item = edit.id ? edit : { ...edit, id: uid("rp") }; save("ratePlans", item, "Pricing", `Rate ${item.name}`); toast("Rate saved"); setEdit(null); }}>Save</Button>
+              <Button disabled={!(edit.price > 0)} onClick={() => { const item = edit.id ? edit : { ...edit, id: uid("rp") }; save("ratePlans", item, "Pricing", `Rate ${zoneOf(item.zoneId)?.name ?? ""} · ${money(item.price)} / ${BLOCK_MINUTES} min`); toast("Rate saved"); setEdit(null); }}>Save</Button>
             </>
           }
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Name"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
-            <Field label="Interval type">
-              <Select value={edit.unit} onChange={(e) => { const unit = e.target.value as RatePlan["unit"]; setEdit({ ...edit, unit, minutes: unit === "hour" ? 60 : unit === "half" ? 30 : edit.minutes }); }}>
-                <option value="half">Half-hourly (30 min)</option>
-                <option value="hour">Hourly (60 min)</option>
-                <option value="custom">Custom interval</option>
-              </Select>
-            </Field>
-            <Field label="Minutes included"><Input type="number" disabled={edit.unit !== "custom"} value={edit.minutes} onChange={(e) => setEdit({ ...edit, minutes: Number(e.target.value) })} /></Field>
-            <Field label="Price per child / person (Rs.)"><Input type="number" value={edit.price} onChange={(e) => setEdit({ ...edit, price: Number(e.target.value) })} /></Field>
-            <Field label="Grace period (min)"><Input type="number" value={edit.graceMinutes} onChange={(e) => setEdit({ ...edit, graceMinutes: Number(e.target.value) })} /></Field>
-            <Field label="Overtime block (min)"><Input type="number" value={edit.overtimeBlock} onChange={(e) => setEdit({ ...edit, overtimeBlock: Number(e.target.value) })} /></Field>
-            <Field label="Overtime price per block (Rs.)"><Input type="number" value={edit.overtimePrice} onChange={(e) => setEdit({ ...edit, overtimePrice: Number(e.target.value) })} /></Field>
-            <div className="flex items-end pb-2"><Toggle checked={edit.active} onChange={(v) => setEdit({ ...edit, active: v })} label="Active" /></div>
-          </div>
+          <Field label={`Price per ${BLOCK_MINUTES} minutes, per ${per(edit.zoneId)} (Rs.)`}>
+            <Input type="number" min={0} autoFocus value={edit.price || ""} onChange={(e) => setEdit({ ...edit, price: Number(e.target.value) })} />
+          </Field>
+          {edit.price > 0 && <RateExamples price={edit.price} />}
         </Modal>
       )}
     </>
+  );
+}
+
+/** What a few typical stays cost at this rate, for one visitor. */
+function RateExamples({ price }: { price: number }) {
+  return (
+    <p className="mt-2 text-xs text-muted">
+      {[20, 60, 80, 150].map((m) => `${minsToLabel(m)} → ${minsToLabel(blocksFor(m) * BLOCK_MINUTES)} = ${money(blocksFor(m) * price)}`).join(" · ")}
+    </p>
   );
 }
 
@@ -369,7 +371,7 @@ function PriceChecker({ initialZone }: { initialZone: string }) {
   const zone = zones.find((z) => z.id === zoneId)!;
   const checkIn = new Date(when);
   const q = stayQuote(
-    { ticket: { zoneId, checkIn: checkIn.toISOString(), visitors: kids, adults: 1 }, zone, plans: plans.filter((p) => p.zoneId === zoneId && p.active), childAges: [5], member, priorVisits: 3 },
+    { ticket: { zoneId, checkIn: checkIn.toISOString(), visitors: kids, adults: 1 }, zone, plan: zoneRate(plans, zoneId), childAges: [5], member, priorVisits: 3 },
     rules,
     settings,
     promos,
@@ -396,19 +398,18 @@ function PriceChecker({ initialZone }: { initialZone: string }) {
       </Card>
       <Card title="Result">
         {!q.plan ? (
-          <p className="text-sm text-muted">This zone has no active rates.</p>
+          <p className="text-sm text-muted">This zone has no rate yet.</p>
         ) : (
           <>
             <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between"><span>{q.plan.name} × {kids}</span><span className="tabular">{money(q.base)}</span></div>
+              <div className="flex justify-between"><span>{minsToLabel(q.blocks * BLOCK_MINUTES)} ({q.blocks} × {money(q.plan.price)}) × {kids}</span><span className="tabular">{money(q.base)}</span></div>
               {q.applied.map((r) => <div key={r.id} className="flex justify-between text-muted"><span>{r.name}</span><span className="tabular">{r.adjust === "percent" ? `${r.value}%` : money(r.value * kids)}</span></div>)}
               {q.applied.length === 0 && <div className="text-muted">No day/time rules apply.</div>}
-              {q.extra > 0 && <div className="flex justify-between"><span>Extra time · {q.blocks} × {q.plan.overtimeBlock} min</span><span className="tabular">{money(q.extra)}</span></div>}
               {q.promoError && <div className="text-[#c24f69]">Promotion not applied: {q.promoError}</div>}
               {q.promo && <div className="flex justify-between text-[#2f8f72]"><span>{q.promo.code}</span><span>{q.discount ? `-${money(q.discount)}` : ""}{q.bonusMinutes ? ` ${q.bonusMinutes} min free` : ""}</span></div>}
             </div>
             <div className="mt-4 border-t border-line pt-3">
-              <div className="text-xs text-muted">Charged at check-out for a {minsToLabel(stay)} stay — the cheapest rate for that time is used automatically</div>
+              <div className="text-xs text-muted">Charged at check-out for a {minsToLabel(stay)} stay — rounded up to {minsToLabel(q.blocks * BLOCK_MINUTES)}</div>
               <div className="font-display text-4xl font-semibold tabular">{money(q.total)}</div>
             </div>
           </>

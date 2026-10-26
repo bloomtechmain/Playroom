@@ -42,8 +42,10 @@ CREATE TABLE users (
   must_change_password boolean,
   last_login           timestamptz,
   created_at           timestamptz NOT NULL,
+  employee_id          text,                    -- the Staff record this login belongs to (none for e.g. an outside accountant)
   seq                  bigserial NOT NULL,
-  CONSTRAINT users_username_unique UNIQUE (username)
+  CONSTRAINT users_username_unique UNIQUE (username),
+  CONSTRAINT users_employee_unique UNIQUE (employee_id)
 );
 CREATE UNIQUE INDEX users_username_lower_idx ON users (lower(username));
 
@@ -55,16 +57,6 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_user_id_idx ON sessions (user_id);
 
-CREATE TABLE password_resets (
-  id         text PRIMARY KEY,
-  user_id    text NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-  code_hash  text NOT NULL,
-  expires_at timestamptz NOT NULL,
-  attempts   integer NOT NULL DEFAULT 0,
-  used_at    timestamptz
-);
-CREATE INDEX password_resets_user_id_idx ON password_resets (user_id);
-
 -- ---------------------------------------------------------------- venue & pricing
 
 CREATE TABLE zones (
@@ -75,7 +67,6 @@ CREATE TABLE zones (
   near_full_pct numeric(14, 2) NOT NULL,
   open_time     text NOT NULL,
   close_time    text NOT NULL,
-  base_price    numeric(14, 2) NOT NULL,
   min_age       integer,
   max_age       integer,
   rules         text NOT NULL DEFAULT '',
@@ -84,18 +75,13 @@ CREATE TABLE zones (
   seq           bigserial NOT NULL
 );
 
+-- one rate per zone: the price per 30 minutes; a stay is charged in 30-minute blocks, rounded up
 CREATE TABLE rate_plans (
-  id             text PRIMARY KEY,
-  zone_id        text NOT NULL,
-  name           text NOT NULL,
-  unit           text NOT NULL CHECK (unit IN ('hour', 'half', 'custom')),
-  minutes        integer NOT NULL,
-  price          numeric(14, 2) NOT NULL,
-  grace_minutes  integer NOT NULL,
-  overtime_block integer NOT NULL,
-  overtime_price numeric(14, 2) NOT NULL,
-  active         boolean NOT NULL DEFAULT true,
-  seq            bigserial NOT NULL
+  id      text PRIMARY KEY,
+  zone_id text NOT NULL UNIQUE,
+  price   numeric(14, 2) NOT NULL,
+  active  boolean NOT NULL DEFAULT true,
+  seq     bigserial NOT NULL
 );
 
 CREATE TABLE price_rules (
@@ -170,7 +156,7 @@ CREATE TABLE tickets (
   visitors     integer NOT NULL,
   adults       integer NOT NULL DEFAULT 0,
   zone_id      text NOT NULL,
-  rate_plan_id text,                             -- chosen at check-out: the cheapest plan for the time spent
+  rate_plan_id text,                             -- the zone's rate used at check-out
   minutes      integer NOT NULL DEFAULT 0,       -- minutes stayed (filled in at check-out)
   visit_id     text,                             -- play + co-work tickets of one visit share it (the first ticket's code)
   check_in     timestamptz NOT NULL,
@@ -182,7 +168,7 @@ CREATE TABLE tickets (
   promo_id     text,
   discount     numeric(14, 2) NOT NULL DEFAULT 0,
   loyalty_used numeric(14, 2) NOT NULL DEFAULT 0,
-  overtime_fee numeric(14, 2) NOT NULL DEFAULT 0,
+  overtime_fee numeric(14, 2) NOT NULL DEFAULT 0,  -- no longer charged; kept for older tickets and backups
   total        numeric(14, 2) NOT NULL,
   paid         numeric(14, 2) NOT NULL DEFAULT 0,
   created_by   text NOT NULL,
@@ -360,7 +346,8 @@ CREATE TABLE employees (
   nic         text NOT NULL DEFAULT '',
   join_date   date NOT NULL,
   basic       numeric(14, 2) NOT NULL,
-  allowance   numeric(14, 2) NOT NULL DEFAULT 0,
+  allowances  jsonb NOT NULL DEFAULT '[]',         -- fixed monthly allowances: [{ name, amount, epf }]
+  deductions  jsonb NOT NULL DEFAULT '[]',         -- recurring monthly deductions: [{ name, amount }]
   ot_rate     numeric(14, 2) NOT NULL DEFAULT 0,   -- per hour
   epf         boolean NOT NULL DEFAULT true,
   etf         boolean NOT NULL DEFAULT true,

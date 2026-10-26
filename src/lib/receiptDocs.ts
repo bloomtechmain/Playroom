@@ -46,10 +46,9 @@ export function ticketDoc(tickets: Ticket[], copy?: boolean): PrintBlock[] {
   out.push(row("Time spent", minsToLabel(stayMinutes(t)), true));
   for (const x of tickets) {
     const z = st.zones.find((y) => y.id === x.zoneId);
-    const p = st.ratePlans.find((y) => y.id === x.ratePlanId);
     const pr = st.promotions.find((y) => y.id === x.promoId);
     out.push(hr, { type: "text", text: `${z?.name ?? ""} · ${x.visitors}${z?.kind === "play" ? ` kid(s)${x.adults ? ` + ${x.adults} adult(s)` : ""}` : " person(s)"}`, bold: true });
-    out.push(row(`${p?.name ?? "Time"} x ${x.visitors}`, n(x.base)));
+    out.push(row(`Time x ${x.visitors}`, n(x.base)));
     if (x.ruleAdjust !== 0) out.push(row(x.ruleNames.join(", ") || "Rate rules", n(x.ruleAdjust)));
     if (x.overtimeFee > 0) out.push(row("Extra time", n(x.overtimeFee)));
     if (x.discount > 0) out.push(row(pr ? `Promo ${pr.code}` : "Discount", `-${n(x.discount)}`));

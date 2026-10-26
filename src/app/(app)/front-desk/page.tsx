@@ -6,7 +6,8 @@ import { AlertTriangle, Check, Clock3, Lock, MessageCircle } from "lucide-react"
 import { useStore, useCan } from "@/lib/store";
 import { useOccupancy, useNow } from "@/lib/hooks";
 import type { RatePlan, Ticket, Zone } from "@/lib/types";
-import { ageOf, cx, fmtTime, money, minsToLabel, timeToMin } from "@/lib/utils";
+import { ageOf, cx, fmtTime, money, timeToMin } from "@/lib/utils";
+import { BLOCK_MINUTES } from "@/lib/pricing";
 import { Badge, Button, Card, Counter, Meter, NoAccess, PageHeader, Select, SetupNeeded, Tabs, toast } from "@/components/ui";
 import { CustomerPicker } from "@/components/CustomerPicker";
 import { EntryTicket, PrintModal } from "@/components/Receipts";
@@ -252,7 +253,7 @@ function Desk({ playZones, coworkZones }: { playZones: Zone[]; coworkZones: Zone
   );
 }
 
-/** "1 Hour Rs 1,500 · 2 Hours Rs 2,500 · then Rs 300 / 15 min" — what the stay will be charged with. */
+/** "Rs 750 per 30 min per child" — what the stay will be charged with. */
 function RateLine({ plans, unit }: { plans: RatePlan[]; unit: string }) {
   if (!plans.length)
     return (
@@ -260,12 +261,9 @@ function RateLine({ plans, unit }: { plans: RatePlan[]; unit: string }) {
         No rates yet — add one in <Link href="/pricing" className="font-bold underline">Pricing → Rate plans</Link>.
       </p>
     );
-  const sorted = [...plans].sort((a, b) => a.minutes - b.minutes);
-  const longest = sorted[sorted.length - 1];
   return (
     <p className="mt-2 text-xs text-muted">
-      Charged on exit per {unit}: {sorted.map((p) => `${minsToLabel(p.minutes)} ${money(p.price)}`).join(" · ")}
-      {longest.overtimePrice > 0 && ` · then ${money(longest.overtimePrice)} / ${longest.overtimeBlock} min`}
+      Charged on exit: {money(plans[0].price)} per {BLOCK_MINUTES} min per {unit}, time rounded up to the next {BLOCK_MINUTES} min
     </p>
   );
 }

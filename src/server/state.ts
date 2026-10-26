@@ -2,7 +2,7 @@ import "server-only";
 import type { Collections } from "@/lib/patch";
 import type { Settings } from "@/lib/types";
 import { today } from "@/lib/utils";
-import { DEMO_MODE, type Actor } from "./auth";
+import type { Actor } from "./auth";
 import { COLLECTION_KEYS, toItems, type CollectionKey } from "./collections";
 import { db } from "./db";
 import { currentRev } from "./mutation";
@@ -19,7 +19,6 @@ const NEEDS: Partial<Record<CollectionKey, string[]>> = {
 export interface AppState {
   rev: number;
   currentUserId: string;
-  demo: boolean;
   data: Collections & { settings: Settings };
 }
 
@@ -41,7 +40,7 @@ export async function loadState(actor: Actor): Promise<AppState> {
     }),
   );
   data.settings = await readSettings(db);
-  return { rev, currentUserId: actor.id, demo: DEMO_MODE, data: data as AppState["data"] };
+  return { rev, currentUserId: actor.id, data: data as AppState["data"] };
 }
 
 /** What the public /book page needs to show availability and prices — no customer data. */
@@ -66,12 +65,12 @@ export async function loadBookingState() {
   };
 }
 
-/** Staff clock-in tablet: names for today's scans (badge tokens only in demo mode, for the demo badges). */
+/** Staff clock-in tablet: names for today's scans. Badge tokens are never sent to the tablet. */
 export async function loadKioskState() {
-  const employees = toItems("employees", await db.query("SELECT id, name, active, qr_token FROM employees WHERE active ORDER BY seq"));
+  const employees = toItems("employees", await db.query("SELECT id, name, active FROM employees WHERE active ORDER BY seq"));
   const attendance = toItems("attendance", await db.query("SELECT * FROM attendance WHERE date = $1", [today()]));
   return {
-    employees: employees.map((e) => ({ ...e, qrToken: DEMO_MODE ? e.qrToken : "" })),
+    employees: employees.map((e) => ({ ...e, qrToken: "" })),
     attendance,
   };
 }

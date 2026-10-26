@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Printer } from "lucide-react";
+import { FileText, Printer } from "lucide-react";
 import { useStore, useCan, useMyShift } from "@/lib/store";
 import { shiftSummary } from "@/lib/shift";
 import { cx, fmtDT, fmtTime, methodLabel, money } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Table, Textarea, toast } from "@/components/ui";
 import ShiftGate from "@/components/ShiftGate";
+import { useNewReport } from "@/lib/useNewReport";
 
 const NOTES = [5000, 2000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
 
@@ -135,8 +136,34 @@ function ShiftReport({ id, onClose }: { id: string; onClose: () => void }) {
   const users = useStore((s) => s.users);
   const settings = useStore((s) => s.settings);
   const r = shiftSummary(sh, tx);
+  const newReport = useNewReport();
+  const cashier = users.find((u) => u.id === sh.userId)?.name ?? "";
+  const downloadPdf = async () => {
+    const p = await newReport("Shift-end report", `${fmtDT(sh.openedAt)} to ${sh.closedAt ? fmtDT(sh.closedAt) : "still open"}`);
+    p.details([["Cashier", cashier], ["Status", sh.closedAt ? "Closed" : "Open"], ["Opened", fmtDT(sh.openedAt)], ["Closed", sh.closedAt ? fmtDT(sh.closedAt) : "-"]]);
+    p.heading("Takings by payment method");
+    const by = Object.entries(r.by);
+    p.table(["Payment method", "Amount (Rs.)"], by.map(([k, v]) => [methodLabel[k] ?? k, v]), { align: ["l", "r"], foot: ["Gross takings", r.total] });
+    p.heading("Cash drawer reconciliation");
+    p.statement(["Amount (Rs.)"], [
+      { kind: "line", label: "Opening float", values: [sh.openingFloat] },
+      { kind: "line", label: "Add: cash sales", values: [r.cashSales] },
+      { kind: "line", label: "Less: cash refunds", values: [r.cashRefunds], neg: true },
+      { kind: "subtotal", label: "Expected cash in drawer", values: [r.expected] },
+      { kind: "line", label: "Counted cash", values: [sh.countedCash ?? 0] },
+      { kind: "grand", label: r.variance == null ? "Variance (not counted yet)" : r.variance === 0 ? "Variance — balanced" : r.variance < 0 ? "Variance — cash short" : "Variance — cash over", values: [r.variance ?? 0] },
+    ]);
+    p.paragraph(`Refunds in the shift: ${money(r.refunds)}. Discounts given: ${money(r.discounts)} on ${r.discountTx.length} payment(s).${sh.countedCash != null ? ` Cash to hand over (counted less float): ${money(Math.max(0, sh.countedCash - sh.openingFloat))}.` : ""}`);
+    if (sh.notes) p.paragraph(`Cashier's note: ${sh.notes}`, { muted: false });
+    if (r.discountTx.length) {
+      p.heading("Discount audit");
+      p.table(["Time", "Reference", "Discount (Rs.)"], [...r.discountTx].sort((x, y) => x.at.localeCompare(y.at)).map((t) => [fmtTime(t.at), t.refLabel, t.discount]), { align: ["l", "l", "r"], foot: ["Total", "", r.discounts] });
+    }
+    p.signatures(["Cashier", "Checked by (manager)"]);
+    p.save(`shift-report_${cashier.replace(/\s+/g, "-").toLowerCase()}_${sh.openedAt.slice(0, 10)}`);
+  };
   return (
-    <Modal open onClose={onClose} title="Shift-end report" width="max-w-md" footer={<><Button variant="secondary" onClick={onClose}>Close</Button><Button icon={<Printer size={15} />} onClick={() => window.print()}>Print</Button></>}>
+    <Modal open onClose={onClose} title="Shift-end report" width="max-w-md" footer={<><Button variant="secondary" onClick={onClose}>Close</Button><Button variant="secondary" icon={<Printer size={15} />} onClick={() => window.print()}>Print slip</Button><Button icon={<FileText size={15} />} onClick={() => downloadPdf().catch(() => toast("Couldn't create the PDF", "err"))}>Download PDF</Button></>}>
       <div className="print-area bg-[#f6f3ee] py-4">
         <div className="receipt mx-auto rounded-md border border-line p-4">
           <div className="text-center" style={{ fontFamily: "var(--font-fredoka)", fontSize: 18, fontWeight: 600 }}>{settings.businessName}</div>

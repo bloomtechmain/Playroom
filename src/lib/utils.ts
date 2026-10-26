@@ -19,6 +19,24 @@ let counter = 0;
 export const uid = (p = "") =>
   `${p}${Date.now().toString(36)}${(counter++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+/** One-time password for a new or reset login, e.g. "Play-7k3m9q2x2" (always passes the strength rule). */
+export function tempPassword() {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return `Play-${Array.from(bytes, (b) => chars[b % chars.length]).join("")}2`;
+}
+
+/** A free username from a person's name: "nimal", then "nimalp", then "nimal2"… */
+export function suggestUsername(name: string, taken: string[]) {
+  const words = name.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  const used = new Set(taken.map((t) => t.toLowerCase()));
+  const first = words[0];
+  const candidates = [first, ...(words[1] ? [first + words[words.length - 1][0]] : [])];
+  for (let i = 2; candidates.length < 50; i++) candidates.push(`${first}${i}`);
+  return candidates.find((c) => !used.has(c)) ?? first;
+}
+
 export const today = () => format(new Date(), "yyyy-MM-dd");
 export const dkey = (d: Date | string) => format(typeof d === "string" ? parseISO(d) : d, "yyyy-MM-dd");
 export const fmtDate = (d: string | Date, f = "dd MMM yyyy") =>

@@ -1,7 +1,7 @@
 import "server-only";
 import { addDays, format } from "date-fns";
 import { bookingConflict, partyPrice, toHHMM } from "@/lib/booking";
-import { rulesFor } from "@/lib/pricing";
+import { blocksFor, rulesFor, zoneRate } from "@/lib/pricing";
 import type { Booking, PayMethod } from "@/lib/types";
 import { timeToMin, uid } from "@/lib/utils";
 import { readCollection } from "../snapshot";
@@ -120,7 +120,7 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
       total: price.total,
       deposit: price.deposit,
       paid: 0,
-      status: "confirmed",
+      status: "pending",
       source: "online",
     };
   } else {
@@ -129,10 +129,10 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
     const end = start + inp.hours * 60;
     if (start < timeToMin(play.openTime) || end > timeToMin(play.closeTime)) throw badRequest(`The play area is open ${play.openTime}–${play.closeTime}`);
     const plans = await readCollection(m.tx, "ratePlans");
-    const hourPlan = plans.find((p) => p.zoneId === play.id && p.unit === "hour");
-    if (!hourPlan) throw badRequest("Online booking is not available right now");
+    const rate = zoneRate(plans, play.id);
+    if (!rate) throw badRequest("Online booking is not available right now");
     const rules = await readCollection(m.tx, "rules");
-    const base = hourPlan.price * inp.hours * inp.kids;
+    const base = rate.price * blocksFor(inp.hours * 60) * inp.kids;
     const adj = rulesFor(rules, settings, play.id, new Date(`${inp.date}T${inp.start}:00`)).reduce((a, r) => a + (r.adjust === "percent" ? (base * r.value) / 100 : r.value * inp.kids), 0);
     const total = Math.round((base + adj) * 0.9); // online bookings get 10% off the counter price
     booking = {
@@ -150,7 +150,7 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
       total,
       deposit: Math.round(total * 0.3),
       paid: 0,
-      status: "confirmed",
+      status: "pending",
       source: "online",
     };
   }
@@ -178,9 +178,8 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
       await m.log("Online", "Created", `Child ${inp.contact.child.trim()}`);
     }
   }
-  // the card payment itself is simulated (no payment gateway configured)
-  const bk = await m.insert("bookings", { ...booking, customerId, id: uid("b"), ref: await nextRef(m), createdAt: new Date().toISOString(), paid: booking.deposit });
-  await m.addTx({ type: "deposit", method: "online", amount: bk.paid, ref: bk.id, refLabel: bk.ref, customerId, discount: 0 });
-  await m.log("Bookings", "Created booking", `${bk.ref} · ${bk.kind}${bk.mode === "full" ? " (full venue)" : ""} · ${bk.date} ${bk.start}`);
+  // no payment gateway: the request holds the slot as pending until staff collect the deposit at the venue
+  const bk = await m.insert("bookings", { ...booking, customerId, id: uid("b"), ref: await nextRef(m), createdAt: new Date().toISOString(), paid: 0 });
+  await m.log("Bookings", "Booking request", `${bk.ref} · ${bk.kind}${bk.mode === "full" ? " (full venue)" : ""} · ${bk.date} ${bk.start} · deposit Rs. ${bk.deposit.toLocaleString()} due`);
   return bk;
 }

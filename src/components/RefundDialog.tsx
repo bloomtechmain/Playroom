@@ -114,7 +114,6 @@ export default function RefundDialog({
                   <Input placeholder="Manager username" value={mgrUser} onChange={(e) => setMgrUser(e.target.value)} />
                   <Input placeholder="Password" type="password" value={mgrPw} onChange={(e) => setMgrPw(e.target.value)} />
                 </div>
-                <p className="mt-1.5 text-[11px] text-muted">Demo: manager / demo123</p>
               </div>
             )}
           </>
