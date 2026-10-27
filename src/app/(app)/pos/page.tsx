@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Minus, Plus, Search, ShoppingBasket, Trash2, X } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
+import { useScanField } from "@/lib/hooks";
 import type { PayMethod, Sale, SaleItem } from "@/lib/types";
 import { cx, money } from "@/lib/utils";
 import { Button, Card, Input, NoAccess, PageHeader, Tabs, toast } from "@/components/ui";
@@ -36,6 +37,7 @@ function POS() {
   const [customerId, setCustomerId] = useState<string>();
   const [showCust, setShowCust] = useState(false);
   const [receipt, setReceipt] = useState<Sale | null>(null);
+  const [scanRef, refocusScan] = useScanField();
 
   const cats = ["All", ...Array.from(new Set(products.map((p) => p.category)))];
   const list = useMemo(() => {
@@ -47,6 +49,7 @@ function POS() {
     const p = products.find((x) => x.id === id)!;
     const inCart = cart.find((i) => i.productId === id)?.qty ?? 0;
     if (inCart >= p.stock) return toast(`Only ${p.stock} ${p.name} in stock`, "err");
+    refocusScan();
     setCart(inCart ? cart.map((i) => (i.productId === id ? { ...i, qty: i.qty + 1 } : i)) : [...cart, { productId: p.id, name: p.name, qty: 1, price: p.price, cost: p.cost }]);
   };
   const setQty = (id: string, qty: number) => setCart(qty <= 0 ? cart.filter((i) => i.productId !== id) : cart.map((i) => (i.productId === id ? { ...i, qty: Math.min(qty, products.find((p) => p.id === id)!.stock) } : i)));
@@ -89,7 +92,7 @@ function POS() {
             <Tabs value={cat} onChange={setCat} items={cats.map((c) => ({ value: c, label: c }))} />
             <form onSubmit={scan} className="relative min-w-[220px] flex-1">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-              <Input className="pl-9" placeholder="Search or scan SKU (e.g. PR-1001)" value={q} onChange={(e) => setQ(e.target.value)} />
+              <Input ref={scanRef} className="pl-9" placeholder="Search or scan SKU (e.g. PR-1001)" value={q} onChange={(e) => setQ(e.target.value)} />
             </form>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -176,7 +179,7 @@ function POS() {
         </Card>
       </div>
       {receipt && (
-        <PrintModal open onClose={() => setReceipt(null)} title={`Receipt ${receipt.no}`} doc={() => saleDoc(receipt)} autoPrint>
+        <PrintModal open onClose={() => { setReceipt(null); refocusScan(); }} title={`Receipt ${receipt.no}`} doc={() => saleDoc(receipt)} autoPrint>
           <SaleReceipt s={receipt} />
         </PrintModal>
       )}

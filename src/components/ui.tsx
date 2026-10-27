@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { X, Lock } from "lucide-react";
-import { useEffect, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes, type SelectHTMLAttributes } from "react";
+import { useEffect, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes, type Ref, type SelectHTMLAttributes } from "react";
 import { create } from "zustand";
 import { cx } from "@/lib/utils";
 
@@ -121,7 +121,7 @@ const fieldCls = (className?: string) => {
   return cx(base, className);
 };
 
-export function Input({ className, ...p }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, ...p }: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   return <input {...p} className={fieldCls(className)} />;
 }
 export function Select({ className, children, ...p }: SelectHTMLAttributes<HTMLSelectElement>) {

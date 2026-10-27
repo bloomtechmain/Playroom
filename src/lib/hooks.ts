@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useStore } from "./store";
 import { lockoutAt } from "./pricing";
 import { today, timeToMin, fmtTime } from "./utils";
@@ -9,6 +9,33 @@ const noop = () => () => {};
 /** true only on the client after hydration — avoids SSR/localStorage mismatches */
 export function useHydrated() {
   return useSyncExternalStore(noop, () => true, () => false);
+}
+
+/**
+ * Keeps the cursor in a scan box so a USB/Bluetooth scanner reads straight away: focused when the page
+ * loads, when the window comes back, and when a key is pressed while nothing else has the cursor (the
+ * scanner's first character then lands in the box). Call the returned refocus after a scan or a dialog closes.
+ */
+export function useScanField<T extends HTMLInputElement = HTMLInputElement>() {
+  const ref = useRef<T>(null);
+  const refocus = useCallback(() => {
+    requestAnimationFrame(() => ref.current?.focus({ preventScroll: true }));
+  }, []);
+  useEffect(() => {
+    const idle = () => !document.activeElement || document.activeElement === document.body;
+    const onKey = (e: KeyboardEvent) => {
+      if (idle() && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) ref.current?.focus({ preventScroll: true });
+    };
+    const onFocus = () => idle() && refocus();
+    refocus();
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refocus]);
+  return [ref, refocus] as const;
 }
 
 export function useNow(ms = 30000) {

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, CircleAlert, Clock3, ScanLine, ShieldAlert } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
-import { useNow } from "@/lib/hooks";
+import { useNow, useScanField } from "@/lib/hooks";
 import { BLOCK_MINUTES, comboShares, stayInputFor, stayQuote, visitOf, type StayQuote } from "@/lib/pricing";
 import type { PayMethod, Ticket } from "@/lib/types";
 import { cx, fmtDT, fmtTime, minsToLabel, money } from "@/lib/utils";
@@ -68,6 +68,7 @@ function Inner() {
   const [manual, setManual] = useState("");
   const [receipt, setReceipt] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scanRef, refocusScan] = useScanField();
 
   const found = lookup ? tickets.find((t) => t.code.toLowerCase() === lookup.code.toLowerCase()) : undefined;
   const visit = found ? visitOf(found, tickets).filter((t) => t.status === "active") : [];
@@ -82,6 +83,7 @@ function Inner() {
     setManual("");
     setLookup({ code: c, at: Date.now() });
     setCode("");
+    refocusScan();
   };
 
   const active = useMemo(
@@ -102,6 +104,7 @@ function Inner() {
     if (!out) return;
     setDone(out);
     setReceipt(true);
+    refocusScan();
     toast(`${out[0].visitId ?? out[0].code} paid ${money(out.reduce((a, t) => a + t.paid, 0))} & checked out`);
   };
 
@@ -121,7 +124,7 @@ function Inner() {
               scan(code);
             }}
           >
-            <Input placeholder="Scan or type ticket code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+            <Input ref={scanRef} placeholder="Scan or type ticket code" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
             <Button>Find</Button>
           </form>
           <p className="mt-2 text-xs text-muted">USB/Bluetooth scanners type straight into this box.</p>
@@ -286,7 +289,7 @@ function Inner() {
         </Table>
       </Card>
       {done && receipt && (
-        <PrintModal open onClose={() => setReceipt(false)} title={`Receipt · ${done[0].visitId ?? done[0].code}`} doc={() => ticketDoc(done)} autoPrint>
+        <PrintModal open onClose={() => { setReceipt(false); refocusScan(); }} title={`Receipt · ${done[0].visitId ?? done[0].code}`} doc={() => ticketDoc(done)} autoPrint>
           <TicketReceipt tickets={done} />
         </PrintModal>
       )}

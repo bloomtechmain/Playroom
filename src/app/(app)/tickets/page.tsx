@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Printer, RotateCcw, Search, XCircle } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import { visitOf } from "@/lib/pricing";
+import { useScanField } from "@/lib/hooks";
 import type { Ticket, TicketStatus } from "@/lib/types";
 import { fmtDT, money, minsToLabel, downloadCSV } from "@/lib/utils";
 import { localDay } from "@/lib/accounting";
@@ -31,6 +32,7 @@ function Inner() {
   const settings = useStore((s) => s.settings);
   const [status, setStatus] = useState<"all" | TicketStatus>("all");
   const [q, setQ] = useState("");
+  const [scanRef] = useScanField();
   const [date, setDate] = useState("");
   const [limit, setLimit] = useState(50);
   const [print, setPrint] = useState<Ticket | null>(null);
@@ -93,7 +95,7 @@ function Inner() {
         />
         <div className="relative min-w-[240px] flex-1">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <Input className="pl-9" placeholder="Ticket code, guardian or phone" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Input ref={scanRef} className="pl-9" placeholder="Ticket code, guardian or phone" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <Input type="date" className="w-auto" value={date} onChange={(e) => setDate(e.target.value)} />
       </div>
