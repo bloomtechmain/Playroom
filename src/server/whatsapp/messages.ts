@@ -1,5 +1,5 @@
 import { differenceInYears, format, parseISO } from "date-fns";
-import type { Child, Customer, Settings, Ticket, Zone } from "@/lib/types";
+import type { Booking, Child, Customer, RefundRequest, Settings, Ticket, Zone } from "@/lib/types";
 import { fmtTime, methodLabel, minsToLabel, money, uid } from "@/lib/utils";
 import { normalizePhone, renderTemplate, whatsappSettings, type Audience, type WaMessageKind } from "@/lib/whatsapp";
 import type { Sql } from "../db/pool";
@@ -160,4 +160,40 @@ export async function queueCampaign(
     await enqueue(sql, { kind: "promotion", phone: p.phone, body, customerId: p.id, campaign, priority: 8, createdBy: by });
   }
   return people.length;
+}
+
+// ---------------------------------------------------------------- staff alerts
+
+/**
+ * Staff alerts go to the numbers in WhatsApp → Settings → Staff alerts; with none entered, to the
+ * business's own WhatsApp — the number linked to this server ("self", resolved when sending).
+ */
+async function alertStaff(sql: Sql, settings: Settings, body: string, by: string) {
+  if (!(await isLinked(sql))) return;
+  const w = whatsappSettings(settings);
+  const numbers = [...new Set(w.staffAlertNumbers.map((n) => normalizePhone(n, w.countryCode)).filter((n): n is string => !!n))];
+  for (const phone of numbers.length ? numbers : ["self"])
+    await enqueue(sql, { kind: "staff", phone, body: `*${settings.businessName}* — ${body}`, priority: 1, createdBy: by });
+}
+
+/** A new online booking request. */
+export async function alertOnlineBooking(sql: Sql, settings: Settings, b: Booking, customer: { name: string; phone: string }, by: string) {
+  if (!whatsappSettings(settings).staffBooking) return;
+  const what = b.kind === "party" ? `party${b.mode === "full" ? " (full venue)" : ""} for ${b.guests} guests` : `play visit for ${b.kids} kid${b.kids === 1 ? "" : "s"}`;
+  const body = `🔔 New online booking request ${b.ref}\n${customer.name} (${customer.phone})\n${what} · ${format(parseISO(b.date), "EEE d MMM")} ${b.start}–${b.end}\nDeposit due ${money(b.deposit)} — confirm it in Bookings.`;
+  await alertStaff(sql, settings, body, by);
+}
+
+/** A refund waiting for approval. */
+export async function alertRefundRequest(sql: Sql, settings: Settings, r: RefundRequest, requester: string, by: string) {
+  if (!whatsappSettings(settings).staffRefundRequest) return;
+  const body = `💸 Refund waiting for approval\n${r.label} · ${money(r.amount)} · requested by ${requester.split(" ")[0]}\nReason: ${r.reason}\nApprove or reject it in Refunds.`;
+  await alertStaff(sql, settings, body, by);
+}
+
+/** The decision on a refund (not when the requester decided it themselves). */
+export async function alertRefundDecision(sql: Sql, settings: Settings, r: RefundRequest, approved: boolean, decider: { id: string; name: string }, requester?: string) {
+  if (!whatsappSettings(settings).staffRefundDecision || r.requestedBy === decider.id) return;
+  const body = `${approved ? "✅ Refund approved" : "❌ Refund rejected"}\n${r.label} · ${money(r.amount)} · by ${decider.name.split(" ")[0]}${requester ? ` (requested by ${requester.split(" ")[0]})` : ""}`;
+  await alertStaff(sql, settings, body, decider.id);
 }

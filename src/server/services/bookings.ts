@@ -8,6 +8,7 @@ import { readCollection } from "../snapshot";
 import { badRequest, HttpError } from "../http";
 import type { Mut } from "../mutation";
 import { chargeWallet } from "./money";
+import { alertOnlineBooking } from "../whatsapp/messages";
 
 export type NewBooking = Omit<Booking, "id" | "ref" | "createdAt">;
 
@@ -198,5 +199,6 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
   // no payment gateway: the request holds the slot as pending until staff collect the deposit at the venue
   const bk = await m.insert("bookings", { ...booking, customerId, id: uid("b"), ref: await nextRef(m), createdAt: new Date().toISOString(), paid: 0 });
   await m.log("Bookings", "Booking request", `${bk.ref} · ${bk.kind}${bk.mode === "full" ? " (full venue)" : ""} · ${bk.date} ${bk.start} · deposit Rs. ${bk.deposit.toLocaleString()} due`);
+  await alertOnlineBooking(m.tx, settings, bk, { name: inp.contact.name.trim(), phone }, m.actor.id);
   return bk;
 }

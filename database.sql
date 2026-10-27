@@ -428,7 +428,7 @@ CREATE TABLE whatsapp_auth (
 CREATE TABLE whatsapp_messages (
   id          text PRIMARY KEY,
   created_at  timestamptz NOT NULL DEFAULT now(),
-  kind        text NOT NULL CHECK (kind IN ('checkin', 'receipt', 'birthday', 'promotion', 'manual')),
+  kind        text NOT NULL CHECK (kind IN ('checkin', 'receipt', 'birthday', 'promotion', 'manual', 'staff')),  -- staff: alerts to staff phones
   customer_id text,
   child_id    text,                               -- birthday wishes: which child
   to_phone    text NOT NULL,                      -- international digits, e.g. 94771234567

@@ -18,6 +18,11 @@ export interface WhatsAppSettings {
   maxDelay: number;
   /** most promotions + birthday wishes sent per day */
   dailyLimit: number;
+  /** staff alerts: which events, and the WhatsApp numbers they go to (none = the linked number itself) */
+  staffBooking: boolean;
+  staffRefundRequest: boolean;
+  staffRefundDecision: boolean;
+  staffAlertNumbers: string[];
 }
 
 export const WHATSAPP_DEFAULTS: WhatsAppSettings = {
@@ -32,6 +37,10 @@ export const WHATSAPP_DEFAULTS: WhatsAppSettings = {
   minDelay: 8,
   maxDelay: 20,
   dailyLimit: 200,
+  staffBooking: true,
+  staffRefundRequest: true,
+  staffRefundDecision: true,
+  staffAlertNumbers: [],
 };
 
 export const whatsappSettings = (s: Pick<Settings, "whatsapp">): WhatsAppSettings => ({ ...WHATSAPP_DEFAULTS, ...(s.whatsapp ?? {}) });
@@ -57,7 +66,7 @@ export const PLACEHOLDERS = {
   promotion: ["{name}", "{business}", "{code}", "{promo}"],
 };
 
-export type WaMessageKind = "checkin" | "receipt" | "birthday" | "promotion" | "manual";
+export type WaMessageKind = "checkin" | "receipt" | "birthday" | "promotion" | "manual" | "staff";
 export type WaMessageStatus = "queued" | "sending" | "sent" | "failed" | "cancelled";
 
 export interface WaMessage {

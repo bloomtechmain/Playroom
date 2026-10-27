@@ -16,7 +16,7 @@ export type { CollectionKey } from "./patch";
  * Other open screens notice the change through the revision poll (see useLiveSync) and refetch.
  */
 
-type Scope = "app" | "login" | "public" | "kiosk";
+type Scope = "app" | "login" | "public";
 type ApiResult<T> = { patch: Patch; result: T };
 export type ClockResult = { ok: boolean; message: string; name?: string; direction?: "in" | "out" };
 export type RefundApproval = "queue" | "now" | "manager";
@@ -94,7 +94,8 @@ interface State extends Collections {
   bookOnline: (input: PublicBookingInput) => Promise<{ booking?: Booking; error?: string }>;
 
   // hr
-  clockByToken: (token: string) => Promise<ClockResult>;
+  /** badge scan; `direction` = what the staff member chose (Clock in / Clock out) */
+  clockByToken: (token: string, direction?: "in" | "out") => Promise<ClockResult>;
   /** save an employee, optionally creating their login; the one-time password comes back once */
   saveStaff: (employee: Employee, login?: { username: string; roleId: string; email: string }) => Promise<{ employee: Employee; user?: User; tempPassword?: string } | null>;
 }
@@ -198,12 +199,9 @@ export const useStore = create<State>()((set, get) => {
           await get().refresh();
         } else if (scope === "login") {
           set({ ...EMPTY, currentUserId: undefined });
-        } else if (scope === "public") {
+        } else {
           const d = await api<Partial<Collections> & { settings: Partial<Settings> }>("/api/public/booking");
           set({ ...EMPTY, ...d, settings: { ...EMPTY_SETTINGS, ...d.settings } as Settings, currentUserId: undefined });
-        } else {
-          const d = await api<{ employees: Collections["employees"]; attendance: Collections["attendance"] }>("/api/kiosk");
-          set({ ...EMPTY, employees: d.employees, attendance: d.attendance, currentUserId: undefined });
         }
       } catch (e) {
         if (!(e instanceof ApiError && e.status === 401)) console.error(e);
@@ -213,11 +211,6 @@ export const useStore = create<State>()((set, get) => {
 
     refresh: async () => {
       const scope = get().scope;
-      if (scope === "kiosk") {
-        const d = await api<{ employees: Collections["employees"]; attendance: Collections["attendance"] }>("/api/kiosk").catch(() => null);
-        if (d) set({ employees: d.employees, attendance: d.attendance });
-        return;
-      }
       if (scope === "public") {
         const d = await api<Partial<Collections>>("/api/public/booking").catch(() => null);
         if (d?.bookings) set({ bookings: d.bookings });
@@ -347,9 +340,9 @@ export const useStore = create<State>()((set, get) => {
     },
 
     saveStaff: (employee, login) => act("/api/staff", { employee, login }),
-    clockByToken: async (token) => {
+    clockByToken: async (token, direction) => {
       try {
-        const r = await enqueue(() => api<ClockResult>("/api/kiosk/clock", { body: { token } }));
+        const r = await enqueue(() => api<ClockResult>("/api/attendance/clock", { body: { token, direction } }));
         void get().refresh();
         return r;
       } catch (e) {
@@ -369,16 +362,19 @@ export function useBoot(scope: Scope) {
 }
 
 /**
- * Keep this screen in step with the others (front desk, live sessions, kiosk…): poll the server's
- * revision number and refetch when somebody else changed something.
+ * Keep this screen in step with the others (front desk, live sessions…): the server pushes its revision
+ * number the moment it moves (/api/state/stream, also in background tabs so notifications arrive at once),
+ * and the screen polls it as a fallback while visible; it refetches when somebody else changed something.
  */
 export function useLiveSync(ms = 4000) {
   useEffect(() => {
     let stop = false;
     let busy = false;
-    const tick = async () => {
+    let again = false;
+    const tick = async (pushed = false) => {
       const s = useStore.getState();
-      if (busy || stop || hasPendingWrites() || document.hidden || !s.ready) return;
+      if (busy && pushed) again = true; // a change arrived mid-refresh: check once more afterwards
+      if (busy || stop || hasPendingWrites() || (document.hidden && !pushed) || !s.ready) return;
       busy = true;
       try {
         if (s.scope === "app") {
@@ -389,14 +385,24 @@ export function useLiveSync(ms = 4000) {
         if (e instanceof ApiError && e.status === 401) useStore.setState({ currentUserId: undefined });
       } finally {
         busy = false;
+        if (again) {
+          again = false;
+          void tick(true);
+        }
       }
     };
-    const t = setInterval(tick, ms);
+    const t = setInterval(() => void tick(), ms);
     const onVisible = () => void tick();
     document.addEventListener("visibilitychange", onVisible);
+    const es = useStore.getState().scope === "app" ? new EventSource("/api/state/stream") : undefined;
+    if (es)
+      es.onmessage = (e) => {
+        if (Number(e.data) !== useStore.getState().rev) void tick(true);
+      };
     return () => {
       stop = true;
       clearInterval(t);
+      es?.close();
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [ms]);

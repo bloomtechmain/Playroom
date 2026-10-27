@@ -214,7 +214,7 @@ function Inner() {
             <Item icon={<CloudUpload size={16} />} t="Cloud hosted" d="Next.js server with a PostgreSQL database; open it from any device on the network or deploy it to a managed cloud." />
             <Item icon={<Database size={16} />} t="Automated daily backups" d="The server takes a full database snapshot every day and keeps the last 14; they are also saved, twice a day, to the backup folder on the office PC. Any snapshot can be downloaded and restored." />
             <Item icon={<ShieldCheck size={16} />} t="Full audit trail" d="Every create, edit, delete, refund and price change is written to the activity log with before → after values." />
-            <Item icon={<MonitorSmartphone size={16} />} t="Multi-device" d="Front desk PC, tablet kiosk for staff QR clock-in and phones for managers." />
+            <Item icon={<MonitorSmartphone size={16} />} t="Multi-device" d="Front desk PC with a QR reader for staff clock-in, tablets and phones for managers." />
           </div>
         </Card>
       </div>

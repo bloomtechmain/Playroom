@@ -32,7 +32,7 @@ async function tick() {
     const w = whatsappSettings(settings);
     // a welcome or receipt that couldn't go out within 2 hours is no use any more
     await s.query(
-      "UPDATE whatsapp_messages SET status = 'cancelled', error = 'Expired — WhatsApp was not connected in time' WHERE status = 'queued' AND kind IN ('checkin', 'receipt') AND created_at < now() - interval '2 hours'",
+      "UPDATE whatsapp_messages SET status = 'cancelled', error = 'Expired — WhatsApp was not connected in time' WHERE status = 'queued' AND kind IN ('checkin', 'receipt', 'staff') AND created_at < now() - interval '2 hours'",
     );
     const { n } = (await s.one<{ n: number }>("SELECT count(*)::int AS n FROM whatsapp_messages WHERE status = 'sent' AND kind = ANY($1::text[]) AND sent_at >= date_trunc('day', now())", [MARKETING]))!;
     const msg = await s.one<{ id: string; kind: string; to_phone: string; body: string; media: { type: string; data: string } | null }>(

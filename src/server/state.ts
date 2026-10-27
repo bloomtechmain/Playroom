@@ -31,7 +31,7 @@ export interface StateChanges {
 
 /** Fields a role may not see, removed from every row it's sent. */
 function forActor(actor: Actor, key: CollectionKey, items: unknown[]) {
-  // badge tokens clock people in at the kiosk: only those who manage staff records see them
+  // badge tokens clock people in at the QR reader: only those who manage staff records see them
   if (key === "employees" && !actor.can("hr.edit")) return (items as { qrToken: string }[]).map((e) => ({ ...e, qrToken: "" }));
   return items;
 }
@@ -101,15 +101,5 @@ export async function loadBookingState() {
     rules,
     bookings: toItems("bookings", upcoming),
     settings: { businessName: settings.businessName, address: settings.address, phone: settings.phone, holidays: settings.holidays },
-  };
-}
-
-/** Staff clock-in tablet: names for today's scans. Badge tokens are never sent to the tablet. */
-export async function loadKioskState() {
-  const employees = toItems("employees", await db.query("SELECT id, name, active FROM employees WHERE active ORDER BY seq"));
-  const attendance = toItems("attendance", await db.query("SELECT * FROM attendance WHERE date = $1", [today()]));
-  return {
-    employees: employees.map((e) => ({ ...e, qrToken: "" })),
-    attendance,
   };
 }

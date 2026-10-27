@@ -1,6 +1,6 @@
 import "server-only";
 import type { Employee, User } from "@/lib/types";
-import { tempPassword, today, uid } from "@/lib/utils";
+import { fmtTime, tempPassword, today, uid } from "@/lib/utils";
 import { toItem } from "../collections";
 import { badRequest, HttpError } from "../http";
 import type { Mut } from "../mutation";
@@ -8,8 +8,11 @@ import { saveRecord } from "./records";
 
 export type ClockResult = { ok: boolean; message: string; name?: string; direction?: "in" | "out" };
 
-/** Badge scan at the kiosk: first scan of the day clocks in, the next one clocks out. */
-export async function clockByToken(m: Mut, token: string): Promise<ClockResult> {
+/**
+ * Badge scan at the QR reader ("Staff attendance"). `direction` is what the staff member chose (Clock in /
+ * Clock out); without it the first scan of the day clocks in and the next one clocks out.
+ */
+export async function clockByToken(m: Mut, token: string, direction?: "in" | "out"): Promise<ClockResult> {
   const raw = token.trim();
   const qr = raw.startsWith("PLAYROOM-STAFF:") ? raw.slice("PLAYROOM-STAFF:".length) : "";
   if (!qr) return { ok: false, message: "Badge not recognised" };
@@ -20,6 +23,8 @@ export async function clockByToken(m: Mut, token: string): Promise<ClockResult> 
   await m.lock(`clock:${e.id}`);
   const d = today();
   const row = await m.tx.one("SELECT * FROM attendance WHERE employee_id = $1 AND date = $2 AND clock_out IS NULL LIMIT 1", [e.id, d]);
+  if (direction === "in" && row) return { ok: false, message: `Already clocked in at ${fmtTime(toItem("attendance", row).clockIn)} — choose Clock out to leave`, name: e.name };
+  if (direction === "out" && !row) return { ok: false, message: "Not clocked in today — choose Clock in first", name: e.name };
   if (row) {
     const open = toItem("attendance", row);
     const mins = (Date.now() - new Date(open.clockIn).getTime()) / 60000;

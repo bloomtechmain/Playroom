@@ -236,7 +236,7 @@ function Inner() {
               <div className="font-mono text-xs text-muted">{badge.code}</div>
             </div>
           </div>
-          <p className="mt-3 text-center text-xs text-muted">Scan at the <a className="font-bold text-navy" href="/kiosk" target="_blank">clock-in kiosk</a> to clock in and out.</p>
+          <p className="mt-3 text-center text-xs text-muted">Hold to the QR reader in <b className="text-navy">Staff attendance</b> (top of any screen) to clock in and out.</p>
         </Modal>
         );
       })()}

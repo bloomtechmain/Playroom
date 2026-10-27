@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { format, subMonths } from "date-fns";
-import { ExternalLink, Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, ScanLine } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import { hoursWorked } from "@/lib/payroll";
 import type { Attendance } from "@/lib/types";
 import { cx, fmtDate, fmtTime, timeToMin, today, uid } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Select, Table, Tabs, toast } from "@/components/ui";
 import { Avatar } from "@/components/Shell";
+import { useStaffClock } from "@/components/StaffClock";
 
 export default function AttendancePage() {
   const can = useCan();
@@ -62,10 +63,10 @@ function Inner() {
     <>
       <PageHeader
         title="Attendance"
-        subtitle="Staff clock in and out by scanning their QR badge at the kiosk."
+        subtitle="Staff clock in and out by holding their QR badge to the QR reader — open “Staff attendance” at the top of any screen."
         actions={
           <>
-            <a href="/kiosk" target="_blank"><Button variant="secondary" icon={<ExternalLink size={15} />}>Open kiosk</Button></a>
+            <Button variant="secondary" icon={<ScanLine size={15} />} onClick={() => useStaffClock.getState().set(true)}>Staff attendance</Button>
             {can("hr.edit") && <Button icon={<Plus size={16} />} onClick={() => setEdit({ a: { id: uid("at"), employeeId: employees[0].id, date: d, clockIn: new Date().toISOString(), method: "manual" }, inT: settings.workStart, outT: "" })}>Manual entry</Button>}
           </>
         }

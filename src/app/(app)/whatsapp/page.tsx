@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { AlertTriangle, Cake, CheckCircle2, Link2, Megaphone, MessageCircle, RefreshCw, Send, Smartphone, Unlink, XCircle } from "lucide-react";
+import { AlertTriangle, Cake, CheckCircle2, Link2, Megaphone, MessageCircle, Plus, RefreshCw, Send, Smartphone, Trash2, Unlink, XCircle } from "lucide-react";
 import { useCan, useStore } from "@/lib/store";
-import { PLACEHOLDERS, whatsappSettings, type Audience, type UpcomingBirthday, type WaMessage, type WaStatus, type WhatsAppSettings } from "@/lib/whatsapp";
+import { normalizePhone, PLACEHOLDERS, whatsappSettings, type Audience, type UpcomingBirthday, type WaMessage, type WaStatus, type WhatsAppSettings } from "@/lib/whatsapp";
 import { cx, fmtDate, fmtDT } from "@/lib/utils";
 import { Badge, Button, Card, Empty, Field, Input, Modal, NoAccess, PageHeader, Select, Stat, Table, Tabs, Textarea, Toggle, toast, type Tone } from "@/components/ui";
 
@@ -427,6 +427,7 @@ const KIND: Record<WaMessage["kind"], [Tone, string]> = {
   birthday: ["rose", "Birthday"],
   promotion: ["lilac", "Promotion"],
   manual: ["gray", "Message"],
+  staff: ["sun", "Staff alert"],
 };
 const STATUS: Record<WaMessage["status"], Tone> = { queued: "sky", sending: "sun", sent: "mint", failed: "rose", cancelled: "gray" };
 
@@ -500,7 +501,7 @@ function Messages() {
               <td><Badge tone={KIND[m.kind][0]}>{KIND[m.kind][1]}</Badge></td>
               <td>
                 <div className="font-semibold">{m.customerName ?? "—"}</div>
-                <div className="text-xs text-muted">+{m.toPhone}</div>
+                <div className="text-xs text-muted">{m.toPhone === "self" ? "This WhatsApp" : `+${m.toPhone}`}</div>
               </td>
               <td className="max-w-[360px] truncate text-muted">{m.campaign && <b className="text-ink">{m.campaign} · </b>}{m.body.split("\n")[0]}</td>
               <td>
@@ -512,7 +513,7 @@ function Messages() {
         </Table>
       )}
       {open && (
-        <Modal open onClose={() => setOpen(null)} title={`${KIND[open.kind][1]} · +${open.toPhone}`}>
+        <Modal open onClose={() => setOpen(null)} title={`${KIND[open.kind][1]} · ${open.toPhone === "self" ? "This WhatsApp" : `+${open.toPhone}`}`}>
           <div className="rounded-2xl bg-[#e7ddd3] p-4">
             <div className="ml-auto max-w-[90%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#d9fdd3] px-3 py-2 text-sm shadow-sm">{open.body}</div>
           </div>
@@ -535,7 +536,10 @@ function Settings() {
 
   const save = async () => {
     if (f.minDelay < 2 || f.maxDelay < f.minDelay) return toast("Pause between messages: at least 2 seconds, and max ≥ min", "err");
-    if (await setSettings({ whatsapp: f }, "WhatsApp settings updated")) toast("WhatsApp settings saved");
+    const numbers = f.staffAlertNumbers.map((n) => n.trim()).filter(Boolean);
+    const bad = numbers.find((n) => !normalizePhone(n, f.countryCode));
+    if (bad) return toast(`“${bad}” isn't a valid WhatsApp number`, "err");
+    if (await setSettings({ whatsapp: { ...f, staffAlertNumbers: numbers } }, "WhatsApp settings updated")) toast("WhatsApp settings saved");
   };
 
   return (
@@ -548,6 +552,40 @@ function Settings() {
           {f.birthdayAuto && (
             <Field label="Send birthday wishes at" className="pl-14"><Input type="time" className="w-40" value={f.birthdayTime} onChange={(e) => set("birthdayTime", e.target.value)} /></Field>
           )}
+        </div>
+      </Card>
+      <Card title="Staff alerts">
+        <div className="space-y-3">
+          <Toggle checked={f.staffBooking} onChange={(v) => set("staffBooking", v)} label={<span><b>New online booking request</b></span>} />
+          <Toggle checked={f.staffRefundRequest} onChange={(v) => set("staffRefundRequest", v)} label={<span><b>Refund waiting for approval</b></span>} />
+          <Toggle checked={f.staffRefundDecision} onChange={(v) => set("staffRefundDecision", v)} label={<span><b>Refund approved / rejected</b></span>} />
+        </div>
+        <div className="mt-4 border-t border-dashed border-line pt-4">
+          <div className="mb-2 text-sm font-bold">Send alerts to these WhatsApp numbers</div>
+          <div className="space-y-2">
+            {f.staffAlertNumbers.map((n, i) => (
+              <div key={i} className="flex gap-2">
+                <Input
+                  placeholder="e.g. 077 123 4567"
+                  inputMode="tel"
+                  value={n}
+                  onChange={(e) => set("staffAlertNumbers", f.staffAlertNumbers.map((x, j) => (j === i ? e.target.value : x)))}
+                  className={cx(n.trim() && !normalizePhone(n, f.countryCode) && "border-[#e0607b]")}
+                />
+                <Button variant="ghost" size="sm" title="Remove" onClick={() => set("staffAlertNumbers", f.staffAlertNumbers.filter((_, j) => j !== i))}>
+                  <Trash2 size={15} />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <Button variant="secondary" size="sm" className="mt-2" icon={<Plus size={14} />} onClick={() => set("staffAlertNumbers", [...f.staffAlertNumbers, ""])}>
+            Add number
+          </Button>
+          <p className="mt-2 text-xs text-muted">
+            {f.staffAlertNumbers.some((n) => n.trim())
+              ? "Each alert goes to every number above. Save settings to apply."
+              : "No numbers yet — alerts go to this business’s own WhatsApp (the linked number), in its “Message yourself” chat."}
+          </p>
         </div>
       </Card>
       <Card title="Sending pace">

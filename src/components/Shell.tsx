@@ -13,7 +13,9 @@ import { useAlerts, useHydrated, useNow } from "@/lib/hooks";
 import { cx, fmtTime } from "@/lib/utils";
 import { backupToFolder, reconnectFolder, useBackupFolder, useBackupFolderSync, useScheduledFolderBackup } from "@/lib/localBackup";
 import { Toaster, Tone, toneCls, toast } from "./ui";
-import { format } from "date-fns";
+import { StaffClockModal, useStaffClock } from "./StaffClock";
+import { enableNotifications, notifySupported, useDesktopNotifier, useNotes, useReadMark } from "@/lib/notify";
+import { format, formatDistanceToNowStrict } from "date-fns";
 
 type NavItem = { href: string; label: string; icon: ReactNode; perm: string; tone: Tone };
 const NAV: { group: string; items: NavItem[] }[] = [
@@ -146,9 +148,9 @@ function Frame({ children }: { children: ReactNode }) {
           <a href="/book" target="_blank" className="flex items-center gap-2 py-1 font-bold hover:text-navy">
             <Globe size={14} /> Online booking page
           </a>
-          <a href="/kiosk" target="_blank" className="flex items-center gap-2 py-1 font-bold hover:text-navy">
-            <ScanLine size={14} /> Staff clock-in kiosk
-          </a>
+          <button onClick={() => useStaffClock.getState().set(true)} className="flex items-center gap-2 py-1 font-bold hover:text-navy">
+            <ScanLine size={14} /> Staff attendance
+          </button>
         </div>
       </div>
     </nav>
@@ -178,6 +180,7 @@ function Frame({ children }: { children: ReactNode }) {
         </main>
       </div>
       <Toaster />
+      <StaffClockModal />
     </div>
   );
 }
@@ -198,6 +201,25 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
     return () => document.removeEventListener("mousedown", h);
   }, []);
   const role = roles.find((r) => r.id === me.roleId);
+  const notes = useNotes();
+  const [readAt, markRead] = useReadMark(me.id);
+  const [seenAt, setSeenAt] = useState("");
+  const unread = notes.filter((n) => n.at > readAt).length;
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported">(() => (notifySupported() ? Notification.permission : "unsupported"));
+  useDesktopNotifier(notes, alerts, (href) => router.push(href));
+  useEffect(() => {
+    if (!notifySupported()) return;
+    // the first click anywhere unlocks the chime and asks once for desktop notifications
+    const once = () => void enableNotifications().then((p) => setPerm(p));
+    document.addEventListener("pointerdown", once, { once: true });
+    return () => document.removeEventListener("pointerdown", once);
+  }, []);
+  const openBell = () => {
+    if (menu === "alerts") return setMenu(null);
+    setSeenAt(readAt); // highlight what was new when the bell was opened
+    markRead();
+    setMenu("alerts");
+  };
   const can = useCan();
   const folder = useBackupFolder();
   const folderBackup = useStore((s) => s.folderBackup);
@@ -213,6 +235,14 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <span className="ml-2 text-muted tabular">{format(now, "h:mm a")}</span>
       </div>
       <div className="flex-1" />
+
+      <button
+        onClick={() => useStaffClock.getState().set(true)}
+        title="Staff clock in / out with their QR badge"
+        className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 text-xs font-bold text-navy hover:bg-sky-soft"
+      >
+        <ScanLine size={14} /> <span className="hidden sm:inline">Staff attendance</span>
+      </button>
 
       {canBackup && folder.name && folder.access !== "granted" && (
         <button
@@ -237,19 +267,38 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
       </Link>
 
       <div className="relative">
-        <button onClick={() => setMenu(menu === "alerts" ? null : "alerts")} className="relative rounded-xl p-2 text-muted hover:bg-white">
+        <button onClick={openBell} title="Notifications" className="relative rounded-xl p-2 text-muted hover:bg-white">
           <Bell size={20} />
-          {alerts.length > 0 && <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#e0607b] px-1 text-[10px] font-bold text-white">{alerts.length}</span>}
+          {unread + alerts.length > 0 && (
+            <span className={cx("absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold text-white", unread ? "bg-[#e0607b]" : "bg-[#8b93a6]")}>{unread + alerts.length}</span>
+          )}
         </button>
         {menu === "alerts" && (
-          <div className="absolute right-0 top-11 w-[340px] rounded-2xl border border-line bg-white p-2 shadow-xl">
+          <div className="absolute right-0 top-11 max-h-[75vh] w-[360px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-line bg-white p-2 shadow-xl">
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="font-display font-medium">Staff alerts</span>
+              <span className="font-display font-medium">Notifications</span>
               <button onClick={() => setMenu(null)} className="text-muted">
                 <X size={16} />
               </button>
             </div>
-            {alerts.length === 0 && <p className="px-2 py-6 text-center text-sm text-muted">All calm on the floor.</p>}
+            {perm === "default" && (
+              <button onClick={() => void enableNotifications().then(setPerm)} className="mt-1 w-full rounded-xl border border-dashed border-line px-3 py-2 text-left text-xs font-bold text-navy hover:bg-sky-soft">
+                Turn on desktop notifications with sound
+              </button>
+            )}
+            {perm === "denied" && <p className="mt-1 rounded-xl bg-[#faf7f1] px-3 py-2 text-xs text-muted">Desktop notifications are blocked for this site — allow them from the lock icon in the address bar.</p>}
+            {notes.length === 0 && <p className="px-2 py-4 text-center text-sm text-muted">No new bookings or refund updates this week.</p>}
+            {notes.slice(0, 15).map((n) => (
+              <Link key={n.id} href={n.href} onClick={() => setMenu(null)} className={cx("mt-1 block rounded-xl px-3 py-2.5", n.at > seenAt ? toneCls[n.tone].soft : "hover:bg-[#faf7f1]")}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className={cx("text-sm font-bold", n.at > seenAt ? toneCls[n.tone].text : "text-ink")}>{n.title}</span>
+                  <span className="shrink-0 text-[11px] text-muted">{formatDistanceToNowStrict(new Date(n.at), { addSuffix: true })}</span>
+                </div>
+                <div className="text-xs text-ink/75">{n.text}</div>
+              </Link>
+            ))}
+            <div className="mt-2 border-t border-line px-2 pb-1 pt-2 text-xs font-bold uppercase tracking-wider text-muted">On the floor now</div>
+            {alerts.length === 0 && <p className="px-2 py-3 text-center text-sm text-muted">All calm on the floor.</p>}
             {alerts.map((a) => (
               <Link key={a.id} href={a.href} onClick={() => setMenu(null)} className={cx("mt-1 block rounded-xl px-3 py-2.5", toneCls[a.tone].soft)}>
                 <div className={cx("text-sm font-bold", toneCls[a.tone].text)}>{a.title}</div>

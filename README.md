@@ -61,7 +61,7 @@ Useful on the server: `sudo systemctl status playroom`, `sudo journalctl -u play
 
 ```
 src/
-  app/(app)/…, book/, kiosk/, login/   UI (unchanged screens)
+  app/(app)/…, book/, login/   UI (unchanged screens)
   app/api/…                            REST API (route handlers)
   lib/store.ts                         client cache of server data + API calls
   lib/{pricing,booking,payroll,…}.ts   business rules shared by browser and server
@@ -80,14 +80,14 @@ scripts/                               db-init, seed (sample data), create-owner
 - **Writes.** Every change is an API call that runs in a single PostgreSQL transaction. The server checks the permission, re-validates the business rules (capacity, full-venue lock-outs, booking clashes, stock, wallet balance, refund limits, approval rules), writes the audit-log entry and returns the changed rows, which the browser merges.
 - **Many screens at once.** Every write gets the next revision number and stamps the rows it changed with it (deleted rows are recorded in `deleted_rows`). Open screens poll `GET /api/state/rev` every few seconds; when it moves they fetch only what changed (`GET /api/state?since=<rev>`), so a sale sends a few rows to every screen, not the whole data set. The full data set is only sent at sign-in, page load and after a restore.
 - **Security.** Passwords are hashed with scrypt; sessions are random tokens stored hashed, in an httpOnly `SameSite=Lax` cookie, valid for 7 days. Deactivating a user ends their sessions; a password change signs out the user's other devices and an administrator's reset signs them out everywhere. Sign-in and the manager sign-off at the counter are throttled per username and address (5 failures per username from one address, 20 per address, 100 per username in 15 minutes); unknown usernames take as long as known ones. Every API write must come from this site (`src/proxy.ts` checks `Origin` / `Sec-Fetch-Site`), and every page is served with a Content-Security-Policy, `X-Frame-Options: DENY` and HSTS (`next.config.ts`). Only the owner can change the owner account, grant the owner role or restore a backup. New and reset accounts get a random one-time password that must be changed at first sign-in; forgotten passwords are reset by an administrator in *Users & Roles* (no email service is connected). Prices for POS sales, party bookings and online bookings are checked against the database, not taken from the browser. Staff badge tokens are made on the server (96-bit random).
-- **Public pages.** `/book` and `/kiosk` use their own endpoints (`/api/public/booking`, `/api/kiosk`) which expose no customer data and are rate-limited per address (10 booking requests an hour; 20 unrecognised badge scans in 15 minutes). No payment gateway is connected: an online booking is a request that holds the slot as *Pending* with nothing paid, and staff confirm it by taking the deposit at the venue.
+- **Public page.** `/book` uses its own endpoint (`/api/public/booking`), which exposes no customer data and is rate-limited per address (10 booking requests an hour). Staff badge scans go through a signed-in screen ("Staff attendance"), limited to 20 unrecognised badges in 15 minutes. No payment gateway is connected: an online booking is a request that holds the slot as *Pending* with nothing paid, and staff confirm it by taking the deposit at the venue.
 - **Backups.** The server stores a full snapshot every day (keeps 14) and on *Back up now*; snapshots can be downloaded from Settings and restored from a file (backup files from the old browser-only demo are accepted too).
 
 ## Sample data (development only)
 
 `npm run db:setup` on an empty database loads about three months of sample history with one account per role (`owner`, `admin`, `manager`, `cashier`, `reception`, `party`, `accounts`, all with the password `demo123`). Never run it on a live database.
 
-Public pages (no login): **/book** (online booking requests) and **/kiosk** (staff QR clock-in tablet).
+Public page (no login): **/book** (online booking requests). Staff clock in/out from **Staff attendance** at the top of any signed-in screen, by holding their badge to the QR reader.
 
 ## Where each requirement lives
 
@@ -116,7 +116,7 @@ Public pages (no login): **/book** (online booking requests) and **/kiosk** (sta
 | Extra: Dedicated POS | POS + Products & Stock (receipt only, no QR) |
 | Extra: Expenses → P&L and cash flow | Expenses (feeds both reports automatically) |
 | Extra: Payroll with EPF/ETF switches | Payroll (global on/off, rates, per-employee opt-out, payslips; paying posts salaries + employer EPF/ETF to expenses) |
-| Extra: HR with QR clock-in/out | Staff (QR badges), Attendance, /kiosk |
+| Extra: HR with QR clock-in/out | Staff (QR badges), Attendance, Staff attendance (QR reader) |
 
 ## Accounting notes
 

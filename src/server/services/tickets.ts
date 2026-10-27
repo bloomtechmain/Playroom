@@ -8,7 +8,7 @@ import type { Mut } from "../mutation";
 import { readCollection } from "../snapshot";
 import { queueCheckIn, queueReceipt } from "../whatsapp/messages";
 import { chargeWallet, earnAndRedeemPoints } from "./money";
-import { requestRefund, decideRefund } from "./refunds";
+import { alertIfPending, requestRefund, decideRefund } from "./refunds";
 
 export interface CheckInInput {
   customerId: string;
@@ -217,6 +217,7 @@ export async function cancelTicket(m: Mut, id: string, reason: string, refundMet
       method: refundMethod ?? "cash",
     });
     if (m.actor.can("refunds.approve") || !settings.refundNeedsApproval) await decideRefund(m, req.id, true);
+    else await alertIfPending(m, req.id);
     // the ticket was cancelled, not just refunded
     await m.update("tickets", id, { status: "cancelled" });
   }

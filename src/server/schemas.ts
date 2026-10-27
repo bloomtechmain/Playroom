@@ -108,7 +108,7 @@ export const publicBookingBody = z.object({
   contact: z.object({ name: text(120), phone: text(30), email: text(200), child: text(120) }),
 });
 
-export const clockBody = z.object({ token: text(300) });
+export const clockBody = z.object({ token: text(300), direction: z.enum(["in", "out"]).optional() });
 
 export const staffBody = z.object({
   employee: z.record(z.string(), z.unknown()).and(z.object({ id, name: text(120) })),

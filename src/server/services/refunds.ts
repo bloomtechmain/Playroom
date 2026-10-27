@@ -6,6 +6,7 @@ import { badRequest, HttpError } from "../http";
 import type { Mut } from "../mutation";
 import { checkCredentials } from "./account";
 import { creditWallet } from "./money";
+import { alertRefundDecision, alertRefundRequest } from "../whatsapp/messages";
 
 export type NewRefund = Omit<RefundRequest, "id" | "at" | "requestedBy" | "status">;
 
@@ -43,8 +44,17 @@ export async function requestRefund(m: Mut, r: NewRefund) {
   return req;
 }
 
-/** Approve or reject. `by` is the approver when a manager signs off at the counter. */
-export async function decideRefund(m: Mut, id: string, approve: boolean, by: Actor = m.actor) {
+/** WhatsApp the approvers about a request that is still waiting (call once the request is settled as pending). */
+export async function alertIfPending(m: Mut, id: string) {
+  const r = await m.get("refunds", id, "Refund request");
+  if (r.status === "pending") await alertRefundRequest(m.tx, await m.settings(), r, m.actor.name, m.actor.id);
+}
+
+/**
+ * Approve or reject. `by` is the approver when a manager signs off at the counter — the requester is
+ * standing right there then, so `atCounter` skips the WhatsApp to them.
+ */
+export async function decideRefund(m: Mut, id: string, approve: boolean, by: Actor = m.actor, atCounter = false) {
   const r = await m.get("refunds", id, "Refund request", { lock: true });
   if (r.status !== "pending") throw badRequest(`This refund was already ${r.status}`);
   const settings = await m.settings();
@@ -81,6 +91,7 @@ export async function decideRefund(m: Mut, id: string, approve: boolean, by: Act
     }
   }
   await m.log("Refunds", approve ? "Approved refund" : "Rejected refund", `${r.label} · Rs. ${r.amount.toLocaleString()}`);
+  if (!atCounter) await alertRefundDecision(m.tx, settings, r, approve, by, (await m.find("users", r.requestedBy))?.name);
 }
 
 /** A manager approves at the counter by typing their credentials on the cashier's screen (throttled like sign-in). */

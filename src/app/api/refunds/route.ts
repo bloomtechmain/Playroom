@@ -3,7 +3,7 @@ import { badRequest, handler, readBody } from "@/server/http";
 import { mutate } from "@/server/mutation";
 import { clientIp } from "@/server/rateLimit";
 import { refundBody } from "@/server/schemas";
-import { decideRefund, managerActor, requestRefund } from "@/server/services/refunds";
+import { alertIfPending, decideRefund, managerActor, requestRefund } from "@/server/services/refunds";
 
 /** Request a refund; optionally approve it straight away (own permission, or a manager signs off at the counter). */
 export const POST = handler(async (req) => {
@@ -14,11 +14,12 @@ export const POST = handler(async (req) => {
       if (!b.manager) throw badRequest("Manager credentials are required");
       const mgr = await managerActor(m, b.manager.username, b.manager.password, clientIp(req));
       const r = await requestRefund(m, { ...b.refund, reason: `${b.refund.reason} (approved at counter by ${mgr.name})` });
-      await decideRefund(m, r.id, true, mgr);
+      await decideRefund(m, r.id, true, mgr, true);
       return { ...r, approvedBy: mgr.name };
     }
     const r = await requestRefund(m, b.refund);
     if (b.approve === "now") await decideRefund(m, r.id, true);
+    else await alertIfPending(m, r.id);
     return r;
   });
 });

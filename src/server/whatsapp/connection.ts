@@ -146,10 +146,18 @@ export async function resumeIfLinked() {
   if (await isLinked(sql()).catch(() => false)) await connect();
 }
 
-/** Send one message. Throws with a readable reason (not connected, number not on WhatsApp…). */
+/**
+ * Send one message. Throws with a readable reason (not connected, number not on WhatsApp…).
+ * `phone` "self" = the linked number itself (staff alerts land in its "Message yourself" chat).
+ */
 export async function sendWhatsApp(phone: string, content: { text: string } | { image: Buffer; caption: string }) {
   const sock = wa.sock;
   if (!sock || wa.status !== "connected") throw new Error("WhatsApp is not connected");
+  if (phone === "self") {
+    if (!wa.me?.id || !/^\d+$/.test(wa.me.id)) throw new Error("The linked WhatsApp number isn't known yet");
+    await sock.sendMessage(`${wa.me.id}@s.whatsapp.net`, content);
+    return;
+  }
   const [found] = (await sock.onWhatsApp(phone)) ?? [];
   if (!found?.exists) throw new Error("This number isn't on WhatsApp");
   await sock.sendMessage(found.jid, content);
