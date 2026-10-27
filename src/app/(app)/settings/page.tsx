@@ -1,13 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CloudUpload, Database, Download, FolderOpen, MonitorSmartphone, ShieldCheck, Upload } from "lucide-react";
+import { CloudUpload, Database, Download, FlaskConical, FolderOpen, MonitorSmartphone, RotateCcw, ShieldCheck, Upload } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import type { DB } from "@/lib/seed";
 import type { Settings } from "@/lib/types";
 import { fmtDT } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, NoAccess, PageHeader, Select, Table, Textarea, Toggle, toast } from "@/components/ui";
 import { PrinterAgentSettings } from "@/components/PrinterAgentSettings";
+import { isPractice, practice } from "@/lib/practice";
 import { backupSchedule, backupToFolder, chooseFolder, folderState, folderSupported, forgetFolder, reconnectFolder, useBackupFolder } from "@/lib/localBackup";
 
 /** Only the fields this form edits — other screens change holidays, categories, payroll and WhatsApp settings meanwhile. */
@@ -155,6 +156,10 @@ function Inner() {
       </div>
 
       <div className="mt-6">
+        <PracticeCard />
+      </div>
+
+      <div className="mt-6">
         <PrinterAgentSettings appName={settings.businessName || "PlayRoom"} />
       </div>
 
@@ -220,6 +225,51 @@ function Inner() {
       </div>
 
     </>
+  );
+}
+
+function PracticeCard() {
+  const [busy, setBusy] = useState(false);
+  const on = isPractice();
+  const run = async (action: "open" | "leave" | "reset", done?: string) => {
+    setBusy(true);
+    const err = await practice(action);
+    setBusy(false);
+    if (err) toast(err, "err");
+    else if (done) toast(done);
+  };
+  return (
+    <Card title={<span className="flex items-center gap-2"><FlaskConical size={17} /> Practice mode (sandbox)</span>} action={on ? <Badge tone="lilac">On in this browser</Badge> : undefined}>
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <div className="min-w-[240px] flex-1 space-y-1">
+          <p>
+            A safe copy of the system for training and trying things out. Sell tickets, check in, take payments, refund, edit prices or staff — none of it touches the
+            real records, reports or backups, and no WhatsApp messages are sent.
+          </p>
+          <p className="text-xs text-muted">
+            Practice mode is per browser: the counter can stay on the real data while someone practises on another PC. It switches off when the browser is closed or on
+            sign-out. Any staff member can open it from their name menu at the top right. Sign-in and passwords always use the real accounts.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {on ? (
+            <Button disabled={busy} variant="secondary" onClick={() => run("leave")}>Leave practice mode</Button>
+          ) : (
+            <Button disabled={busy} icon={<FlaskConical size={15} />} onClick={() => run("open")}>Open practice mode</Button>
+          )}
+          <Button
+            disabled={busy}
+            variant="ghost"
+            icon={<RotateCcw size={15} />}
+            onClick={() => {
+              if (confirm("Reset the practice data?\n\nEverything done in practice mode is thrown away and replaced with a fresh copy of today's real data. Anyone practising right now starts over.")) void run("reset", "Practice data reset to a fresh copy of the real data");
+            }}
+          >
+            {busy ? "Working…" : "Reset practice data"}
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

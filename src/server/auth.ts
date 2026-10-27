@@ -2,9 +2,10 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import type { User } from "@/lib/types";
-import { db, type Sql } from "./db";
+import { realDb as db, type Sql } from "./db";
 import { HttpError } from "./http";
 import { sha256 } from "./password";
+import { PRACTICE_COOKIE } from "./practice";
 
 const COOKIE = "pr_session";
 const TTL_MS = 7 * 24 * 3600 * 1000;
@@ -35,6 +36,7 @@ export async function createSession(userId: string) {
     path: "/",
     maxAge: TTL_MS / 1000,
   });
+  (await cookies()).delete(PRACTICE_COOKIE); // every sign-in starts on the real data
 }
 
 export async function destroySession() {
@@ -42,6 +44,7 @@ export async function destroySession() {
   const token = jar.get(COOKIE)?.value;
   if (token) await db.query("DELETE FROM sessions WHERE id = $1", [sha256(token)]);
   jar.delete(COOKIE);
+  jar.delete(PRACTICE_COOKIE);
 }
 
 /** Sign a user out everywhere (password reset by an administrator). */
@@ -55,7 +58,7 @@ export async function endOtherSessions(sql: Sql, userId: string) {
   await sql.query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2", [userId, token ? sha256(token) : ""]);
 }
 
-/** The signed-in staff member, or null. Deactivated users lose access immediately. */
+/** The signed-in staff member, or null. Deactivated users lose access immediately. Always checked against the real database. */
 export async function getActor(): Promise<Actor | null> {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;

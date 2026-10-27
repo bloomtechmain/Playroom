@@ -8,6 +8,7 @@ import { SYSTEM } from "../auth";
 import { db, transaction, type Sql } from "../db";
 import { badRequest, HttpError } from "../http";
 import { diff, type Mut } from "../mutation";
+import { inPractice, notInPractice } from "../practice";
 import { commitRev } from "../rev";
 import { settingsPatch } from "../recordSchemas";
 import { exportSnapshot, importSnapshot } from "../snapshot";
@@ -54,6 +55,7 @@ export async function createBackup(sql: Sql, auto: boolean, by: string) {
 }
 
 export async function manualBackup(m: Mut) {
+  notInPractice("Backing up");
   const snapshot = await createBackup(m.tx, false, m.actor.id);
   m.markSettingsChanged();
   await m.log("Settings", "Changed setting", "Manual backup created");
@@ -66,12 +68,14 @@ export async function manualBackup(m: Mut) {
  * a new server must let everyone sign in again.
  */
 export async function folderBackup(m: Mut, reason: string) {
+  notInPractice("Backing up");
   const snapshot = await exportSnapshot(m.tx);
   await m.log("Settings", "Backup saved to PC", reason);
   return snapshot;
 }
 
 export async function downloadBackup(id: string) {
+  notInPractice("Downloading backups");
   const b = await db.one<{ at: string; snapshot: Snapshot | null }>("SELECT at, snapshot FROM backups WHERE id = $1", [id]);
   if (!b) throw new HttpError(404, "Backup not found");
   if (!b.snapshot) throw badRequest("This backup entry has no stored snapshot");
@@ -79,6 +83,7 @@ export async function downloadBackup(id: string) {
 }
 
 export async function restoreBackup(m: Mut, snap: Snapshot, fileName: string) {
+  notInPractice("Restoring a backup");
   // a restore replaces every account and role, so only the owner may do it
   if (!(await m.find("roles", m.actor.roleId))?.locked) throw new HttpError(403, "Only the owner can restore a backup");
   try {
@@ -91,22 +96,24 @@ export async function restoreBackup(m: Mut, snap: Snapshot, fileName: string) {
   m.requestReload();
 }
 
-let lastHousekeeping = 0;
+const lastHousekeeping = { real: 0, practice: 0 };
 
 /**
  * Daily chores: tickets still "active" from a previous day become
  * "expired", and one automatic backup is taken per day. Runs at most once a minute per server.
  */
 export async function housekeeping() {
-  if (Date.now() - lastHousekeeping < 60_000) return;
-  lastHousekeeping = Date.now();
+  const practice = inPractice();
+  const mode = practice ? "practice" : "real";
+  if (Date.now() - lastHousekeeping[mode] < 60_000) return;
+  lastHousekeeping[mode] = Date.now();
   const midnight = startOfDay(new Date()).toISOString();
   await transaction(async (sql) => {
     await sql.query("SELECT pg_advisory_xact_lock(hashtext('housekeeping'))");
     const expired = await sql.query<{ id: string }>("UPDATE tickets SET status = 'expired' WHERE status = 'active' AND check_in < $1 RETURNING id", [midnight]);
     const backedUpToday = await sql.one("SELECT 1 FROM backups WHERE at >= $1 LIMIT 1", [midnight]);
     const hasUsers = await sql.one("SELECT 1 FROM users LIMIT 1");
-    const backup = !backedUpToday && !!hasUsers;
+    const backup = !backedUpToday && !!hasUsers && !practice; // the practice copy isn't backed up
     if (backup) await createBackup(sql, true, SYSTEM.id);
     // the backup list lives in the settings the screens load
     if (expired.length || backup) await commitRev(sql, { upserts: { tickets: expired.map((t) => t.id) }, settings: backup });

@@ -1,35 +1,42 @@
 import { connection } from "next/server";
 import { requireActor } from "@/server/auth";
 import { handler } from "@/server/http";
-import { currentRev } from "@/server/mutation";
+import { practiceDb, realDb } from "@/server/db";
+import { inPractice } from "@/server/practice";
+import { readVersion } from "@/server/rev";
 
 /**
  * Server-sent events: pushes the revision number the moment it moves, so open screens — including tabs in
  * the background, whose timers the browser slows down — refresh (and raise notifications) straight away.
  * One shared check of the revision per second serves every open screen.
  */
-const listeners = new Set<(rev: number) => void>();
-let timer: ReturnType<typeof setInterval> | undefined;
-let last = -1;
+interface Watcher {
+  listeners: Set<(rev: number) => void>;
+  timer?: ReturnType<typeof setInterval>;
+  last: number;
+}
+// one per database: screens in practice mode follow the practice copy
+const watchers = { real: { listeners: new Set(), last: -1 } as Watcher, practice: { listeners: new Set(), last: -1 } as Watcher };
 
-function watch(fn: (rev: number) => void) {
-  listeners.add(fn);
-  timer ??= setInterval(async () => {
+function watch(practice: boolean, fn: (rev: number) => void) {
+  const w = practice ? watchers.practice : watchers.real;
+  w.listeners.add(fn);
+  w.timer ??= setInterval(async () => {
     try {
-      const rev = await currentRev();
-      if (rev === last) return;
-      last = rev;
-      listeners.forEach((l) => l(rev));
+      const { rev } = await readVersion(practice ? practiceDb() : realDb);
+      if (rev === w.last) return;
+      w.last = rev;
+      w.listeners.forEach((l) => l(rev));
     } catch {
       // database briefly unavailable: try again next second
     }
   }, 1000);
   return () => {
-    listeners.delete(fn);
-    if (!listeners.size && timer) {
-      clearInterval(timer);
-      timer = undefined;
-      last = -1;
+    w.listeners.delete(fn);
+    if (!w.listeners.size && w.timer) {
+      clearInterval(w.timer);
+      w.timer = undefined;
+      w.last = -1;
     }
   };
 }
@@ -37,6 +44,8 @@ function watch(fn: (rev: number) => void) {
 export const GET = handler(async (req) => {
   await connection();
   await requireActor();
+  const practice = inPractice();
+  const last = (practice ? watchers.practice : watchers.real).last;
   const enc = new TextEncoder();
   let stop = () => {};
   const body = new ReadableStream<Uint8Array>({
@@ -49,7 +58,7 @@ export const GET = handler(async (req) => {
         }
       };
       send(last < 0 ? "retry: 3000\n\n" : `retry: 3000\ndata: ${last}\n\n`);
-      const unwatch = watch((rev) => send(`data: ${rev}\n\n`));
+      const unwatch = watch(practice, (rev) => send(`data: ${rev}\n\n`));
       const ping = setInterval(() => send(": ping\n\n"), 25_000); // keeps proxies from closing an idle stream
       stop = () => {
         unwatch();

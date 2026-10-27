@@ -1,6 +1,7 @@
 import { requireActor } from "@/server/auth";
 import { db } from "@/server/db";
 import { handler } from "@/server/http";
+import { inPractice } from "@/server/practice";
 import { wa } from "@/server/whatsapp/connection";
 import type { WaStatus } from "@/lib/whatsapp";
 
@@ -14,6 +15,8 @@ export const GET = handler(async (): Promise<WaStatus> => {
             count(*) FILTER (WHERE status = 'sent' AND kind IN ('birthday', 'promotion') AND sent_at >= date_trunc('day', now()))::int AS "marketingToday"
        FROM whatsapp_messages`,
   ))!;
+  // nothing queued in the practice copy is ever sent: the sender only reads the real database
+  if (inPractice()) return { status: "disconnected", error: "Practice mode — messages are listed here but never sent", queue: q };
   // the linking QR hands over the business account: only for those allowed to link it
   return { status: wa.status, qr: actor.can("whatsapp.connect") ? wa.qr : undefined, me: wa.me, error: wa.error, queue: q };
 });

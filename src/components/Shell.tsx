@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LayoutGrid, Ticket, ScanLine, Shapes, Tags, ShoppingBasket, Package, Wallet, RotateCcw, Users, CalendarHeart,
-  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X,
+  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X, FlaskConical,
 } from "lucide-react";
 import { useStore, useMe, useCan, useMyShift, useBoot, useLiveSync } from "@/lib/store";
 import { useAlerts, useHydrated, useNow } from "@/lib/hooks";
@@ -14,6 +14,7 @@ import { cx, fmtTime } from "@/lib/utils";
 import { backupToFolder, reconnectFolder, useBackupFolder, useBackupFolderSync, useScheduledFolderBackup } from "@/lib/localBackup";
 import { Toaster, Tone, toneCls, toast } from "./ui";
 import { StaffClockModal, useStaffClock } from "./StaffClock";
+import { isPractice, practice } from "@/lib/practice";
 import { enableNotifications, notifySupported, useDesktopNotifier, useNotes, useReadMark } from "@/lib/notify";
 import { format, formatDistanceToNowStrict } from "date-fns";
 
@@ -109,8 +110,15 @@ function Frame({ children }: { children: ReactNode }) {
   const backups = useStore((s) => s.settings.backups);
   useLiveSync();
   const settings = useStore((s) => s.settings);
-  useBackupFolderSync(backups, can("settings.edit") || can("backups.save"));
-  useScheduledFolderBackup(settings, can("settings.edit") || can("backups.save"));
+  // practice data never goes into the PC's backup folder
+  const [practicing] = useState(isPractice);
+  useBackupFolderSync(backups, (can("settings.edit") || can("backups.save")) && !practicing);
+  useScheduledFolderBackup(settings, (can("settings.edit") || can("backups.save")) && !practicing);
+  useEffect(() => {
+    // another tab of this browser switched practice mode on or off: load this one again from the right data
+    const t = setInterval(() => isPractice() !== practicing && window.location.reload(), 1500);
+    return () => clearInterval(t);
+  }, [practicing]);
 
   const nav = (
     <nav className="flex h-full flex-col">
@@ -173,6 +181,7 @@ function Frame({ children }: { children: ReactNode }) {
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
+        {practicing && <PracticeBanner />}
         <TopBar onMenu={() => setOpen(true)} />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <TempPasswordNotice />
@@ -223,7 +232,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   const can = useCan();
   const folder = useBackupFolder();
   const folderBackup = useStore((s) => s.folderBackup);
-  const canBackup = can("settings.edit") || can("backups.save");
+  const canBackup = (can("settings.edit") || can("backups.save")) && !isPractice();
 
   return (
     <header ref={ref} className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-line bg-paper/90 px-4 backdrop-blur sm:px-6 lg:px-8 no-print">
@@ -326,6 +335,19 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
             <button
               onClick={async () => {
                 setMenu(null);
+                const leaving = isPractice();
+                if (!leaving && !confirm("Open practice mode?\n\nYou'll work on a copy of the data: sales, check-ins, refunds and edits made there don't change the real records, and no WhatsApp messages are sent.")) return;
+                toast(leaving ? "Going back to the real data…" : "Opening practice mode…");
+                const err = await practice(leaving ? "leave" : "open");
+                if (err) toast(err, "err");
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold hover:bg-[#f6f2eb]"
+            >
+              <FlaskConical size={16} /> {isPractice() ? "Leave practice mode" : "Practice mode"}
+            </button>
+            <button
+              onClick={async () => {
+                setMenu(null);
                 // end of the day: save a backup into this PC's backup folder before signing out
                 if (canBackup && folder.name) {
                   toast("Saving the backup…");
@@ -343,6 +365,25 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         )}
       </div>
     </header>
+  );
+}
+
+function PracticeBanner() {
+  return (
+    <div className="sticky top-0 z-40 flex flex-wrap items-center gap-x-3 gap-y-1 bg-[#7a4fc4] px-4 py-2 text-sm text-white sm:px-6 lg:px-8 no-print">
+      <FlaskConical size={16} className="shrink-0" />
+      <span className="font-bold">Practice mode</span>
+      <span className="min-w-0 flex-1 text-white/85">You&apos;re working on a copy — nothing here changes real sales, stock or customers, and no WhatsApp messages are sent.</span>
+      <button
+        onClick={async () => {
+          const err = await practice("leave");
+          if (err) toast(err, "err");
+        }}
+        className="rounded-full bg-white px-3 py-1 text-xs font-bold text-[#5b3a99] hover:bg-white/90"
+      >
+        Leave practice mode
+      </button>
+    </div>
   );
 }
 

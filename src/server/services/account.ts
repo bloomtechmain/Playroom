@@ -5,6 +5,7 @@ import { db } from "../db";
 import { badRequest, HttpError } from "../http";
 import { mutate, type Mut } from "../mutation";
 import { hashPassword, isStrongPassword, verifyPassword } from "../password";
+import { inPractice, onRealData } from "../practice";
 import { clear, note, recent } from "../rateLimit";
 
 interface UserRow {
@@ -50,7 +51,9 @@ export async function checkCredentials<T extends { password_hash: string }>(user
 let dummy: Promise<string> | undefined;
 const dummyHash = () => (dummy ??= hashPassword(randomUUID()));
 
-export async function login(username: string, password: string, ip: string) {
+export const login = (username: string, password: string, ip: string) => onRealData(() => signIn(username, password, ip));
+
+async function signIn(username: string, password: string, ip: string) {
   const u = await checkCredentials(username, password, ip, findByLogin);
   if (!u) throw new HttpError(401, "Wrong username or password");
   if (!u.active) throw new HttpError(403, "This account has been deactivated. Please contact an administrator.");
@@ -61,12 +64,15 @@ export async function login(username: string, password: string, ip: string) {
   });
 }
 
-export async function logout(actor: Actor | null) {
-  if (actor) await mutate(actor, (m) => m.log("Auth", "Signed out", ""));
-  await destroySession();
-}
+export const logout = (actor: Actor | null) =>
+  onRealData(async () => {
+    if (actor) await mutate(actor, (m) => m.log("Auth", "Signed out", ""));
+    await destroySession();
+  });
 
 export async function changePassword(m: Mut, current: string, next: string) {
+  // passwords live in the real database; a change in the practice copy would sign nobody in
+  if (inPractice()) throw badRequest("Leave practice mode to change your password");
   const u = await m.tx.one<{ id: string; name: string; password_hash: string }>("SELECT id, name, password_hash FROM users WHERE id = $1", [m.actor.id]);
   if (!u || !(await verifyPassword(current, u.password_hash))) throw badRequest("Current password is incorrect");
   if (!isStrongPassword(next)) throw badRequest("Use 8+ characters with letters and numbers");

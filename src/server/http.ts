@@ -1,6 +1,7 @@
 import { unstable_rethrow } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
+import { PRACTICE_COOKIE, practiceMode } from "./practice";
 
 export class HttpError extends Error {
   constructor(
@@ -39,17 +40,21 @@ function toResponse(e: unknown) {
   return Response.json({ error: "Something went wrong on the server" }, { status: 500 });
 }
 
-/** Wraps a route handler: plain return values become JSON, thrown errors become `{ error }` responses. */
+/**
+ * Wraps a route handler: plain return values become JSON, thrown errors become `{ error }` responses.
+ * The request runs on the practice database when the browser is in practice mode.
+ */
 export function handler<C = unknown>(fn: (req: NextRequest, ctx: C) => Promise<unknown>) {
-  return async (req: NextRequest, ctx: C) => {
-    try {
-      const out = await fn(req, ctx);
-      return out instanceof Response ? out : Response.json(out ?? { ok: true }, { headers: { "Cache-Control": "no-store" } });
-    } catch (e) {
-      unstable_rethrow(e); // let Next's own control-flow signals (e.g. end of prerender) through
-      return toResponse(e);
-    }
-  };
+  return (req: NextRequest, ctx: C) =>
+    practiceMode.run(req.cookies?.get(PRACTICE_COOKIE)?.value === "1", async () => {
+      try {
+        const out = await fn(req, ctx);
+        return out instanceof Response ? out : Response.json(out ?? { ok: true }, { headers: { "Cache-Control": "no-store" } });
+      } catch (e) {
+        unstable_rethrow(e); // let Next's own control-flow signals (e.g. end of prerender) through
+        return toResponse(e);
+      }
+    });
 }
 
 /** Parse and validate a JSON body. Bodies over `maxBytes` (1 MB unless a route needs more) are refused unread. */

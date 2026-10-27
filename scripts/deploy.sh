@@ -33,6 +33,11 @@ rm -rf "$APP.new" && mkdir -p "$APP.new" && tar -xzf /tmp/playroom-app.tgz -C "$
 cp /opt/playroom/.env.production "$APP.new/.env" && chmod 600 "$APP.new/.env"
 # database upgrades (scripts/migrations/*.sql, each safe to re-run and compatible with the running version)
 for f in "$APP.new"/scripts/migrations/*.sql; do [ -e "$f" ] && sudo -u playroom psql playroom -q -v ON_ERROR_STOP=1 < "$f"; done  # as the app's own user, so new tables belong to it
+# practice copy (Settings → Practice mode): its own database, created empty here and filled by the app when first opened
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'playroom_practice'" | grep -q 1 || sudo -u postgres createdb -O playroom playroom_practice
+if sudo -u playroom psql playroom_practice -tAc "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'state_version'" | grep -q 1; then
+  for f in "$APP.new"/scripts/migrations/*.sql; do [ -e "$f" ] && sudo -u playroom psql playroom_practice -q -v ON_ERROR_STOP=1 < "$f"; done
+fi
 chown -R playroom:playroom "$APP.new"
 sudo -u playroom -H bash -c "cd $APP.new && export NEXT_TELEMETRY_DISABLED=1 && npm ci --no-audit --no-fund --loglevel=error && npm run build > /tmp/playroom-build.log 2>&1 || { tail -30 /tmp/playroom-build.log; exit 1; }"
 rm -rf "$APP.old" && mv "$APP" "$APP.old" && mv "$APP.new" "$APP"

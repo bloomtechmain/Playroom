@@ -9,6 +9,7 @@ import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Table, 
 import ShiftGate from "@/components/ShiftGate";
 import { useNewReport } from "@/lib/useNewReport";
 import { backupToFolder } from "@/lib/localBackup";
+import { isPractice } from "@/lib/practice";
 
 const NOTES = [5000, 2000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
 
@@ -36,7 +37,7 @@ function Inner() {
 
   // end of the shift: save a backup into this PC's backup folder (if one is set up on this PC)
   const saveEndOfDay = async () => {
-    if (!can("settings.edit") && !can("backups.save")) return;
+    if ((!can("settings.edit") && !can("backups.save")) || isPractice()) return;
     const r = await backupToFolder("end-of-day", () => folderBackup(`Shift closed · ${userName}`));
     if (r === "saved") toast("Backup saved to the PC's backup folder");
     else if (r !== "no-folder") toast("The backup couldn't be saved to the PC's backup folder", "err");
