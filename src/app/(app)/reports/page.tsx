@@ -8,6 +8,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, Line
 import { useStore, useCan } from "@/lib/store";
 import { useNewReport } from "@/lib/useNewReport";
 import type { StatementRow } from "@/lib/reportPdf";
+import { UnitReports } from "@/components/UnitReports";
 
 const count = (n: number) => (n ? n.toLocaleString("en-US") : "-");
 const num = (n: number) => n.toLocaleString("en-US");
@@ -47,7 +48,7 @@ export default function ReportsPage() {
 }
 
 function Inner() {
-  const [tab, setTab] = useState<"pl" | "cf" | "sales" | "occ" | "loyalty" | "party">("pl");
+  const [tab, setTab] = useState<"pl" | "cf" | "sales" | "units" | "occ" | "loyalty" | "party">("pl");
   const [preset, setPreset] = useState<Preset>("month");
   const [from, setFrom] = useState(D(startOfMonth(new Date())));
   const [to, setTo] = useState(today());
@@ -114,6 +115,7 @@ function Inner() {
             { value: "pl", label: "Profit & Loss" },
             { value: "cf", label: "Cash Flow" },
             { value: "sales", label: "Sales" },
+            { value: "units", label: "Café · Playroom · Co-work" },
             { value: "occ", label: "Occupancy" },
             { value: "loyalty", label: "Loyalty & Promotions" },
             { value: "party", label: "Parties" },
@@ -124,6 +126,7 @@ function Inner() {
         {tab === "pl" && <PL range={range} prev={prev} pdf={pdf} />}
         {tab === "cf" && <CF range={range} prev={prev} pdf={pdf} />}
         {tab === "sales" && <Sales range={range} pdf={pdf} />}
+        {tab === "units" && <UnitReports range={range} pdfRef={pdf} period={longPeriod(range)} fileRange={fileRange(range)} />}
         {tab === "occ" && <Occupancy range={range} pdf={pdf} />}
         {tab === "loyalty" && <Loyalty range={range} pdf={pdf} />}
         {tab === "party" && <Parties range={range} pdf={pdf} />}

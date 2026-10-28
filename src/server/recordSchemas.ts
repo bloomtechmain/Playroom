@@ -114,6 +114,9 @@ const SCHEMAS: Partial<Record<CollectionKey, z.ZodType>> = {
     depositPct: pct,
     includes: z.array(text(200)).max(100),
     active: z.boolean(),
+    overtimeRoomPerHour: opt(money),
+    overtimeFullPerHour: opt(money),
+    overtimeGraceMin: opt(count(240)),
   }),
   addons: z.object({ id, name, kind: z.enum(["addon", "food", "decor"]), price: money, perHead: z.boolean(), active: z.boolean() }),
   bookings: z.object({
@@ -160,6 +163,9 @@ const SCHEMAS: Partial<Record<CollectionKey, z.ZodType>> = {
     nic: text(30),
     joinDate: ymd,
     basic: money,
+    employmentType: opt(z.enum(["permanent", "non_permanent", "part_time"])),
+    payBasis: opt(z.enum(["monthly", "daily", "hourly"])),
+    rate: opt(money),
     allowances: z.array(payItem).max(50),
     deductions: z.array(payItem).max(50),
     otRate: money,
@@ -170,8 +176,29 @@ const SCHEMAS: Partial<Record<CollectionKey, z.ZodType>> = {
     active: z.boolean(),
     qrToken: text(100),
     color: text(40),
+    qualifications: opt(z.array(z.object({ id, title: name, institution: text(200), year: text(20), notes: opt(text(1000)) })).max(100)),
+    workHours: opt(z.object({ start: hhmm, end: hhmm, days: z.array(z.number().int().min(0).max(6)).max(7), graceMin: z.number().int().min(0).max(240) })),
   }),
+  // arrival fields are worked out on the server; whatever the browser sends is replaced
   attendance: z.object({ id, employeeId: id, date: ymd, clockIn: iso, clockOut: opt(iso), method: z.enum(["qr", "manual"]) }),
+  trainings: z.object({
+    id,
+    title: name,
+    date: ymd,
+    trainer: text(200),
+    hours: z.number().finite().min(0).max(1000),
+    description: text(4000),
+    employeeIds: z.array(id).max(1000),
+  }),
+  evaluations: z.object({
+    id,
+    employeeId: id,
+    period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "expected yyyy-MM"),
+    scores: z.record(z.string().max(100), z.number().finite().min(0).max(10)),
+    notes: text(4000),
+    evaluatedBy: opt(z.string().max(100)),
+    at: opt(iso),
+  }),
   payroll: z.object({
     id,
     month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "expected yyyy-MM"),
@@ -181,6 +208,9 @@ const SCHEMAS: Partial<Record<CollectionKey, z.ZodType>> = {
         z.object({
           employeeId: id,
           basic: money,
+          payBasis: opt(z.enum(["monthly", "daily", "hourly"])),
+          units: opt(z.number().finite().min(0).max(744)),
+          rate: opt(money),
           allowance: money,
           allowances: opt(z.array(payItem).max(50)),
           otHours: z.number().finite().min(0).max(744),
@@ -237,6 +267,8 @@ export const settingsPatch = z
     guardianRate: rate.nullish(),
     // the PC's automatic folder backups (lib/localBackup.ts)
     localBackup: z.object({ times: z.array(hhmm).min(1).max(4), keepDays: count(3650) }).nullish(),
+    kpis: z.array(z.object({ id, name, description: opt(text(500)), weight: z.number().finite().min(0).max(100), active: z.boolean() })).max(50).nullish(),
+    attendanceWeight: z.number().finite().min(0).max(100).nullish(),
   })
   .partial()
   .loose();

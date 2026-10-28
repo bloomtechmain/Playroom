@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LayoutGrid, Ticket, ScanLine, Shapes, Tags, ShoppingBasket, Package, Wallet, RotateCcw, Users, CalendarHeart,
-  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X, FlaskConical,
+  BarChart3, MessageCircle, Receipt, Banknote, IdCard, Clock, ShieldCheck, History, Settings, Bell, Menu, LogOut, UserRound, ChevronDown, Globe, X, FlaskConical, GraduationCap, TrendingUp,
 } from "lucide-react";
 import { useStore, useMe, useCan, useMyShift, useBoot, useLiveSync } from "@/lib/store";
 import { useAlerts, useHydrated, useNow } from "@/lib/hooks";
@@ -15,6 +15,7 @@ import { backupToFolder, reconnectFolder, useBackupFolder, useBackupFolderSync, 
 import { Toaster, Tone, toneCls, toast } from "./ui";
 import { StaffClockModal, useStaffClock } from "./StaffClock";
 import { isPractice, practice } from "@/lib/practice";
+import { CREDIT, CREDIT_PHONE, CREDIT_URL } from "@/lib/credit";
 import { enableNotifications, notifySupported, useDesktopNotifier, useNotes, useReadMark } from "@/lib/notify";
 import { format, formatDistanceToNowStrict } from "date-fns";
 
@@ -61,6 +62,8 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { href: "/staff", label: "Staff", icon: <IdCard size={18} />, perm: "hr.view", tone: "sky" },
       { href: "/attendance", label: "Attendance", icon: <Clock size={18} />, perm: "hr.view", tone: "lilac" },
+      { href: "/training", label: "Training", icon: <GraduationCap size={18} />, perm: "hr.view", tone: "teal" },
+      { href: "/performance", label: "Performance", icon: <TrendingUp size={18} />, perm: "hr.evaluate", tone: "mint" },
     ],
   },
   {
@@ -159,6 +162,11 @@ function Frame({ children }: { children: ReactNode }) {
           <button onClick={() => useStaffClock.getState().set(true)} className="flex items-center gap-2 py-1 font-bold hover:text-navy">
             <ScanLine size={14} /> Staff attendance
           </button>
+          <p className="mt-3 text-[11px] leading-snug">
+            <a href={CREDIT_URL} target="_blank" rel="noopener noreferrer" className="hover:text-navy hover:underline">{CREDIT}</a>
+            <br />
+            {CREDIT_PHONE}
+          </p>
         </div>
       </div>
     </nav>

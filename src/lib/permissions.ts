@@ -72,6 +72,8 @@ export const PERMISSION_GROUPS: { module: string; items: { key: string; label: s
     items: [
       { key: "hr.view", label: "View staff & attendance" },
       { key: "hr.edit", label: "Manage staff records" },
+      { key: "hr.hours", label: "Set working hours & see late / early arrivals" },
+      { key: "hr.evaluate", label: "Set KPIs, score staff & see performance reports" },
     ],
   },
   {
@@ -103,7 +105,7 @@ export const DEFAULT_ROLES: Role[] = [
     id: "manager",
     name: "Manager",
     description: "Floor & shift management, approvals",
-    permissions: without("roles.edit", "settings.edit", "payroll.run", "users.edit"),
+    permissions: without("roles.edit", "settings.edit", "payroll.run", "users.edit", "hr.hours", "hr.evaluate"),
   },
   {
     id: "cashier",

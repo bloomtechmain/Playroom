@@ -1,4 +1,5 @@
 import { jsPDF } from "jspdf";
+import { CREDIT, CREDIT_PHONE } from "./credit";
 import autoTable, { type CellDef, type CellHookData, type RowInput } from "jspdf-autotable";
 import { format } from "date-fns";
 import type { Settings } from "./types";
@@ -86,7 +87,7 @@ export class ReportPdf {
       }
       d.setDrawColor(...RULE).setLineWidth(0.2).line(M, h - 12, this.w - M, h - 12);
       d.setTextColor(...MUTED).setFont("helvetica", "normal").setFontSize(7.5);
-      d.text(clean(`${this.meta.preparedBy ? `Prepared by ${this.meta.preparedBy}  ·  ` : ""}${this.biz.businessName} management system`), M, h - 8);
+      d.text(clean(`${this.meta.preparedBy ? `Prepared by ${this.meta.preparedBy}  ·  ` : ""}${CREDIT} · ${CREDIT_PHONE}`), M, h - 8);
       d.text(`Page ${i} of ${pages}`, this.w - M, h - 8, { align: "right" });
     }
   }

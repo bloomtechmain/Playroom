@@ -1,7 +1,8 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import { format } from "date-fns";
-import type { Booking, Customer, Employee, Expense, PayrollRun, Role, User } from "@/lib/types";
+import type { Attendance, Booking, Customer, Employee, Evaluation, Expense, PayrollRun, Role, User } from "@/lib/types";
+import { arrivalOf } from "@/lib/punctuality";
 import { uid } from "@/lib/utils";
 import { endSessions } from "../auth";
 import type { CollectionKey, Item } from "../collections";
@@ -33,6 +34,8 @@ const EDIT: Partial<Record<CollectionKey, { perms: string[]; removable?: boolean
   expenses: { perms: ["expenses.edit", "payroll.run", "products.edit"], removable: true },
   employees: { perms: ["hr.edit"] },
   attendance: { perms: ["hr.edit"] },
+  trainings: { perms: ["hr.edit"], removable: true },
+  evaluations: { perms: ["hr.evaluate"], removable: true },
   payroll: { perms: ["payroll.run"] },
 };
 
@@ -93,7 +96,27 @@ export async function saveRecord<K extends CollectionKey>(m: Mut, key: K, input:
       const ex = existing as Employee | undefined;
       // badge tokens are made here, not in the browser: a new badge (new employee or re-issue) gets an unguessable one
       const qrToken = !ex || e.qrToken !== ex.qrToken ? randomBytes(12).toString("hex").toUpperCase() : ex.qrToken;
-      saved = (await m.put("employees", { ...e, qrToken })) as Item<K>;
+      // only those who may see working hours change them (everyone else's screens never had them)
+      const workHours = m.actor.can("hr.hours") ? e.workHours : ex?.workHours;
+      saved = (await m.put("employees", { ...e, qrToken, workHours })) as Item<K>;
+      break;
+    }
+    case "attendance": {
+      // a manual entry or correction is measured against the employee's hours like a badge scan
+      // (fixing only the clock-out keeps the arrival as it was measured)
+      const a = item as Attendance;
+      const ex = existing as Attendance | undefined;
+      const same = ex && ex.clockIn.slice(0, 16) === a.clockIn.slice(0, 16) && ex.employeeId === a.employeeId; // to the minute: the edit form has no seconds
+      const arrival = same ? { scheduledIn: ex.scheduledIn, inDiffMin: ex.inDiffMin, punctuality: ex.punctuality } : arrivalOf((await m.get("employees", a.employeeId, "Employee")).workHours, a.clockIn);
+      saved = (await m.put("attendance", { ...a, ...arrival })) as Item<K>;
+      break;
+    }
+    case "evaluations": {
+      // who marked it and when are recorded here, not taken from the browser
+      const ev = item as Evaluation;
+      if (ev.id !== `ev-${ev.employeeId}-${ev.period}`) throw badRequest("One evaluation per employee and month");
+      await m.get("employees", ev.employeeId, "Employee");
+      saved = (await m.put("evaluations", { ...ev, evaluatedBy: m.actor.id, at: new Date().toISOString() })) as Item<K>;
       break;
     }
     case "payroll": {

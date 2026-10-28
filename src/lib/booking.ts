@@ -45,3 +45,31 @@ export function bookingConflict(
   }
   return null;
 }
+
+// ---------------------------------------------------------------- the booking QR and overtime
+
+/** What the booking QR holds: the reference, the date and the booked time — "PLAYROOM-BOOKING:BK-1005|2026-11-17|09:00-12:00". */
+export const bookingQr = (b: Pick<Booking, "ref" | "date" | "start" | "end">) => `PLAYROOM-BOOKING:${b.ref}|${b.date}|${b.start}-${b.end}`;
+
+/** The booking reference in a scanned QR (also older QRs that held just "BK-1005", or a reference typed in). */
+export function refFromQr(text: string) {
+  const t = text.trim();
+  const body = t.toUpperCase().startsWith("PLAYROOM-BOOKING:") ? t.slice("PLAYROOM-BOOKING:".length) : t;
+  return body.split("|")[0].trim().toUpperCase();
+}
+
+/** Overtime is charged in blocks of this many minutes: half an hour at half the hourly rate. */
+export const OVERTIME_BLOCK_MIN = 30;
+
+/**
+ * Staying past the booked end: within the package's grace minutes it's free; after that every started
+ * half hour (counted from the booked end) costs half the hourly overtime rate for the room or the whole venue.
+ */
+export function overtimeFor(b: Pick<Booking, "date" | "end" | "mode">, pkg: PartyPackage | undefined, at: Date) {
+  const end = new Date(`${b.date}T${b.end}:00`);
+  const minutes = Math.max(0, Math.floor((at.getTime() - end.getTime()) / 60000));
+  const rate = (b.mode === "full" ? pkg?.overtimeFullPerHour : pkg?.overtimeRoomPerHour) ?? 0;
+  const grace = pkg?.overtimeGraceMin ?? 10;
+  const blocks = minutes > grace ? Math.ceil(minutes / OVERTIME_BLOCK_MIN) : 0;
+  return { minutes, grace, rate, billedMinutes: blocks * OVERTIME_BLOCK_MIN, charge: Math.round((blocks * OVERTIME_BLOCK_MIN * rate) / 60) };
+}

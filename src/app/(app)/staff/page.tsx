@@ -3,14 +3,16 @@
 import { useState } from "react";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
-import { KeyRound, Pencil, Plus, Printer, QrCode, RefreshCw } from "lucide-react";
+import { CalendarClock, KeyRound, Pencil, Plus, Printer, QrCode, RefreshCw } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
-import type { Employee, Role, User } from "@/lib/types";
+import type { Employee, EmploymentType, PayBasis, Role, User } from "@/lib/types";
 import { cx, fmtDate, fmtTime, money, suggestUsername, today, uid } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Select, Stat, Table, Toggle, toast } from "@/components/ui";
 import { Avatar, Logo } from "@/components/Shell";
 import { PayItemsEditor } from "@/components/PayItems";
-import { cleanItems } from "@/lib/payroll";
+import { cleanItems, EMPLOYMENT, employmentOf, PAY_BASIS, payBasisOf, payLabel } from "@/lib/payroll";
+import { arrivalLabel, hoursLabel, PUNCTUALITY } from "@/lib/punctuality";
+import { AttendanceRecord, WorkHoursEditor } from "@/components/Arrival";
 
 export default function StaffPage() {
   const can = useCan();
@@ -45,16 +47,22 @@ function Inner() {
   const [issued, setIssued] = useState<{ name: string; username: string; pw: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [badge, setBadge] = useState<Employee | null>(null);
+  const [record, setRecord] = useState<Employee | null>(null);
   const canLogin = can("users.edit");
+  // working hours and late / early arrivals: administrators and the owner only
+  const canHours = can("hr.hours");
   const d = today();
   const todayAtt = attendance.filter((a) => a.date === d);
   const inNow = todayAtt.filter((a) => !a.clockOut).length;
-  const payrollCost = employees.filter((e) => e.active).reduce((a, e) => a + e.basic + allowanceTotal(e), 0);
+  const active = employees.filter((e) => e.active);
+  const payrollCost = active.filter((e) => payBasisOf(e) === "monthly").reduce((a, e) => a + e.basic + allowanceTotal(e), 0);
+  const dayPaid = active.filter((e) => payBasisOf(e) === "daily").length;
+  const hourPaid = active.filter((e) => payBasisOf(e) === "hourly").length;
   const loginOf = (e: Employee) => users.find((u) => u.employeeId === e.id);
   const roleName = (id: string) => roles.find((r) => r.id === id)?.name ?? id;
 
   const openNew = () => {
-    setEdit({ id: "", code: `EMP-${101 + employees.length}`, name: "", designation: "", phone: "", nic: "", joinDate: d, basic: 45000, allowances: [], deductions: [], otRate: 280, epf: true, etf: true, epfNo: "", bank: "", active: true, qrToken: Math.random().toString(36).slice(2, 9).toUpperCase(), color: "sky" });
+    setEdit({ id: "", code: `EMP-${101 + employees.length}`, name: "", designation: "", phone: "", nic: "", joinDate: d, basic: 45000, employmentType: "permanent", payBasis: "monthly", rate: 0, allowances: [], deductions: [], otRate: 280, epf: true, etf: true, epfNo: "", bank: "", active: true, qrToken: Math.random().toString(36).slice(2, 9).toUpperCase(), color: "sky" });
     setLogin(newLogin(canLogin));
   };
   const setName = (name: string) => {
@@ -69,6 +77,8 @@ function Inner() {
   const submitEmployee = async () => {
     if (!edit) return;
     if (!edit.name.trim()) return toast("Enter the employee's name", "err");
+    const unit = PAY_BASIS[payBasisOf(edit)].unit;
+    if (unit && !(edit.rate! > 0)) return toast(`Enter the pay per ${unit}`, "err");
     if (!loginReady(login)) return toast("Choose a username and a role for the login", "err");
     setBusy(true);
     const clean = { ...edit, allowances: cleanItems(edit.allowances ?? []), deductions: cleanItems(edit.deductions ?? []) };
@@ -93,17 +103,17 @@ function Inner() {
     <>
       <PageHeader
         title="Staff"
-        subtitle="Team records, salaries, app logins and QR badges for clocking in."
+        subtitle={`Team records, salaries, app logins and QR badges for clocking in${canHours ? ", working hours and late / early arrivals" : ""}.`}
         actions={can("hr.edit") && <Button icon={<Plus size={16} />} onClick={openNew}>Add employee</Button>}
       />
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Active staff" value={employees.filter((e) => e.active).length} tone="sky" />
         <Stat label="On site now" value={inNow} sub={`${todayAtt.length} clocked in today`} tone="mint" />
-        <Stat label="Monthly fixed salaries" value={money(payrollCost)} tone="lilac" />
+        <Stat label="Monthly fixed salaries" value={money(payrollCost)} sub={dayPaid || hourPaid ? `Salaried staff · ${dayPaid} paid by the day, ${hourPaid} by the hour` : undefined} tone="lilac" />
         <Stat label="EPF/ETF registered" value={employees.filter((e) => e.epf).length} sub={`${employees.filter((e) => !e.epf).length} opted out`} tone="sun" />
       </div>
       <Card pad={false}>
-        <Table head={["Employee", "Designation", "App login", "Joined", "Basic + allowance", "EPF / ETF", "Today", ""]}>
+        <Table head={["Employee", "Designation", ...(canHours ? ["Working hours"] : []), "App login", "Joined", "Pay", "EPF / ETF", "Today", ""]}>
           {employees.map((e) => {
             const a = todayAtt.find((x) => x.employeeId === e.id);
             const u = loginOf(e);
@@ -113,12 +123,16 @@ function Inner() {
                   <div className="flex items-center gap-3">
                     <Avatar name={e.name} size={32} />
                     <div>
-                      <div className="font-bold">{e.name}</div>
+                      <Link href={`/staff/${e.id}`} className="font-bold hover:text-navy hover:underline">{e.name}</Link>
                       <div className="font-mono text-[11px] text-muted">{e.code}{e.phone && ` · ${e.phone}`}</div>
                     </div>
                   </div>
                 </td>
-                <td>{e.designation}</td>
+                <td>
+                  {e.designation}
+                  <div className="mt-0.5"><Badge tone={EMPLOYMENT[employmentOf(e)].tone}>{EMPLOYMENT[employmentOf(e)].label}</Badge></div>
+                </td>
+                {canHours && <td className="text-xs">{e.workHours ? <span className="tabular">{hoursLabel(e.workHours)}</span> : <span className="text-muted">Not set</span>}</td>}
                 <td>
                   {u ? (
                     <div>
@@ -132,11 +146,15 @@ function Inner() {
                   )}
                 </td>
                 <td className="tabular text-muted">{fmtDate(e.joinDate)}</td>
-                <td className="tabular">{money(e.basic + allowanceTotal(e))}{(e.allowances?.length ?? 0) > 0 && <div className="text-[11px] text-muted">{e.allowances.length} allowance{e.allowances.length > 1 && "s"}</div>}</td>
+                <td className="tabular">{payLabel(e)}{(e.allowances?.length ?? 0) > 0 && <div className="text-[11px] text-muted">{e.allowances.length} allowance{e.allowances.length > 1 && "s"}</div>}</td>
                 <td className="text-xs">{e.epf ? <Badge tone="mint">EPF {e.etf && "+ ETF"}</Badge> : <Badge tone="gray">Not enrolled</Badge>}</td>
-                <td>{!e.active ? <Badge tone="gray">Inactive</Badge> : a ? (a.clockOut ? <Badge tone="sky">Left {fmtTime(a.clockOut)}</Badge> : <Badge tone="mint">In since {fmtTime(a.clockIn)}</Badge>) : <Badge tone="gray">Not in</Badge>}</td>
+                <td>
+                  {!e.active ? <Badge tone="gray">Inactive</Badge> : a ? (a.clockOut ? <Badge tone="sky">Left {fmtTime(a.clockOut)}</Badge> : <Badge tone="mint">In since {fmtTime(a.clockIn)}</Badge>) : <Badge tone="gray">Not in</Badge>}
+                  {canHours && a?.punctuality && <div className="mt-1"><Badge tone={PUNCTUALITY[a.punctuality].tone}>{arrivalLabel(a)}</Badge></div>}
+                </td>
                 <td>
                   <div className="flex justify-end gap-1">
+                    {canHours && <button title="Attendance record" onClick={() => setRecord(e)} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><CalendarClock size={15} /></button>}
                     <button title="QR badge" onClick={() => setBadge(e)} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><QrCode size={15} /></button>
                     {can("hr.edit") && <button title="Edit" onClick={() => { setEdit(e); setLogin(newLogin(false)); }} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><Pencil size={15} /></button>}
                   </div>
@@ -161,9 +179,56 @@ function Inner() {
             </div>
           </Section>
           <Section n={2} title="Pay & EPF">
+            <div className="mb-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <div className="mb-1.5 text-[13px] font-bold text-ink/80">Employment type</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(Object.keys(EMPLOYMENT) as EmploymentType[]).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      // a new part-timer usually starts on an hourly rate without EPF/ETF; all of it can be changed
+                      onClick={() => setEdit({ ...edit, employmentType: t, ...(!edit.id ? { payBasis: EMPLOYMENT[t].defaultBasis, ...(t === "part_time" ? { epf: false, etf: false } : {}) } : {}) })}
+                      className={cx("rounded-xl border px-2 py-2 text-sm font-bold transition", employmentOf(edit) === t ? "border-navy bg-sky-soft" : "border-line bg-white hover:bg-[#f6f2eb]")}
+                    >
+                      {EMPLOYMENT[t].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[13px] font-bold text-ink/80">Paid by</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(Object.keys(PAY_BASIS) as PayBasis[]).map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      title={PAY_BASIS[b].hint}
+                      onClick={() => setEdit({ ...edit, payBasis: b })}
+                      className={cx("rounded-xl border px-2 py-2 text-sm font-bold transition", payBasisOf(edit) === b ? "border-navy bg-sky-soft" : "border-line bg-white hover:bg-[#f6f2eb]")}
+                    >
+                      {PAY_BASIS[b].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {payBasisOf(edit) !== "monthly" && (
+                <p className="text-xs text-muted lg:col-span-2">
+                  Payroll starts from the {payBasisOf(edit) === "daily" ? "days they clocked in" : "hours between their clock-in and clock-out"} that month; you check their attendance and set the amount before paying. Allowances below are added on top.
+                </p>
+              )}
+            </div>
             <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Basic salary (Rs.)"><Input type="number" value={edit.basic} onChange={(e) => setEdit({ ...edit, basic: Number(e.target.value) })} /></Field>
-              <Field label="OT rate / hour (Rs.)"><Input type="number" value={edit.otRate} onChange={(e) => setEdit({ ...edit, otRate: Number(e.target.value) })} /></Field>
+              {payBasisOf(edit) === "monthly" ? (
+                <Field label="Basic salary (Rs.)"><Input type="number" value={edit.basic} onChange={(e) => setEdit({ ...edit, basic: Number(e.target.value) })} /></Field>
+              ) : (
+                <Field label={`Pay per ${PAY_BASIS[payBasisOf(edit)].unit} (Rs.)`}><Input type="number" min={0} value={edit.rate ?? 0} onChange={(e) => setEdit({ ...edit, rate: Number(e.target.value) })} /></Field>
+              )}
+              {payBasisOf(edit) !== "hourly" ? (
+                <Field label="OT rate / hour (Rs.)"><Input type="number" value={edit.otRate} onChange={(e) => setEdit({ ...edit, otRate: Number(e.target.value) })} /></Field>
+              ) : (
+                <div />
+              )}
               <Field label="EPF number"><Input value={edit.epfNo} onChange={(e) => setEdit({ ...edit, epfNo: e.target.value })} /></Field>
               <Field label="Bank & account" className="sm:col-span-2"><Input value={edit.bank} onChange={(e) => setEdit({ ...edit, bank: e.target.value })} /></Field>
               <div className="flex flex-wrap gap-6 sm:col-span-3">
@@ -182,7 +247,12 @@ function Inner() {
               <PayItemsEditor kind="deduction" items={edit.deductions ?? []} onChange={(deductions) => setEdit({ ...edit, deductions })} />
             </div>
           </Section>
-          <Section n={3} title="App login" last>
+          {canHours && (
+            <Section n={3} title="Working hours">
+              <WorkHoursEditor value={edit.workHours} onChange={(workHours) => setEdit({ ...edit, workHours })} />
+            </Section>
+          )}
+          <Section n={canHours ? 4 : 3} title="App login" last>
             {edit.id ? (
               loginOf(edit) ? (
                 <p className="text-sm text-muted">Signs in as <b className="font-mono text-ink">{loginOf(edit)!.username}</b> · {roleName(loginOf(edit)!.roleId)}. Change the role or reset the password in <Link href="/users" className="font-bold text-navy hover:underline">Users &amp; Roles</Link>.</p>
@@ -200,6 +270,8 @@ function Inner() {
           </Section>
         </Modal>
       )}
+
+      {record && <AttendanceRecord employee={employees.find((x) => x.id === record.id) ?? record} onClose={() => setRecord(null)} />}
 
       {loginFor && (
         <Modal open onClose={() => setLoginFor(null)} title={`App login for ${loginFor.name}`} footer={<><Button variant="secondary" onClick={() => setLoginFor(null)}>Cancel</Button><Button disabled={busy} onClick={submitLogin}>Create login</Button></>}>

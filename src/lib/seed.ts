@@ -1,32 +1,7 @@
 import { addDays, addMinutes, differenceInCalendarDays, format, setHours, setMinutes, startOfDay, startOfMonth, subDays, endOfMonth, subMonths } from "date-fns";
 import { DEFAULT_ROLES } from "./permissions";
 import { stayQuote } from "./pricing";
-import type {
-  Activity,
-  Addon,
-  Attendance,
-  Booking,
-  Child,
-  Customer,
-  Employee,
-  Expense,
-  PartyPackage,
-  PayMethod,
-  PayrollRun,
-  PriceRule,
-  Product,
-  Promotion,
-  RatePlan,
-  RefundRequest,
-  Role,
-  Sale,
-  Settings,
-  Shift,
-  Ticket,
-  Transaction,
-  User,
-  Zone,
-} from "./types";
+import type { Activity, Addon, Attendance, Booking, Child, Customer, Employee, Expense, PartyPackage, PayMethod, PayrollRun, PriceRule, Product, Promotion, RatePlan, RefundRequest, Role, Sale, Settings, Shift, Ticket, Transaction, User, Zone, Training, Evaluation } from "./types";
 import { calcPayLine } from "./payroll";
 import { shiftSummary } from "./shift";
 
@@ -53,6 +28,8 @@ export interface DB {
   attendance: Attendance[];
   payroll: PayrollRun[];
   activity: Activity[];
+  trainings: Training[];
+  evaluations: Evaluation[];
   settings: Settings;
   seededAt: string;
 }
@@ -623,6 +600,8 @@ export function buildSeed(): DB {
     attendance,
     payroll,
     activity,
+    trainings: [],
+    evaluations: [],
     settings,
     seededAt: iso(now),
   };

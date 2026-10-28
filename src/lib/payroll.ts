@@ -1,4 +1,5 @@
-import type { Attendance, Employee, PayItem, PayLine, Settings } from "./types";
+import type { Attendance, Employee, EmploymentType, PayBasis, PayItem, PayLine, Settings } from "./types";
+import { money } from "./utils";
 
 const sum = (items: PayItem[]) => items.reduce((a, x) => a + x.amount, 0);
 
@@ -11,20 +12,68 @@ export const lineAllowances = (l: PayLine): PayItem[] => l.allowances ?? (l.allo
 /** A pay line's deductions other than EPF — older runs only stored the total. */
 export const lineDeductions = (l: PayLine): PayItem[] => l.deductionItems ?? (l.deductions ? [{ name: "Advances / no-pay", amount: l.deductions }] : []);
 
+/** The employment type only describes the person; how they're paid is chosen separately (`payBasis`). */
+export const EMPLOYMENT: Record<EmploymentType, { label: string; tone: "navy" | "sun" | "lilac"; defaultBasis: PayBasis }> = {
+  permanent: { label: "Permanent", tone: "navy", defaultBasis: "monthly" },
+  non_permanent: { label: "Non-permanent", tone: "sun", defaultBasis: "monthly" },
+  part_time: { label: "Part-time", tone: "lilac", defaultBasis: "hourly" },
+};
+
+export const PAY_BASIS: Record<PayBasis, { label: string; hint: string; unit?: "day" | "hour" }> = {
+  monthly: { label: "Monthly salary", hint: "Basic salary + allowances" },
+  daily: { label: "Daily rate", hint: "Paid per day worked", unit: "day" },
+  hourly: { label: "Hourly rate", hint: "Paid per hour worked", unit: "hour" },
+};
+
+export const employmentOf = (e: Employee): EmploymentType => e.employmentType ?? "permanent";
+export const payBasisOf = (e: Employee): PayBasis => e.payBasis ?? "monthly";
+
+/** "Rs. 52,000 / month", "Rs. 2,500 / day", "Rs. 400 / hour" */
+export function payLabel(e: Employee) {
+  const unit = PAY_BASIS[payBasisOf(e)].unit;
+  return unit ? `${money(e.rate ?? 0)} / ${unit}` : `${money(e.basic + sum(e.allowances ?? []))} / month`;
+}
+
+/** What attendance says a day- or hour-paid employee worked in a month: days present, or hours between clock-in and clock-out. */
+export function attendanceUnits(att: Attendance[], e: Employee, month: string) {
+  const rows = att.filter((a) => a.employeeId === e.id && a.date.startsWith(month));
+  if (payBasisOf(e) === "daily") return new Set(rows.map((a) => a.date)).size;
+  return Math.round(rows.filter((a) => a.clockOut).reduce((s, a) => s + hoursWorked(a), 0) * 4) / 4; // to the quarter hour
+}
+
+/** What a line was paid for: "12 days × Rs. 2,500" (empty for monthly salaries). */
+export function unitsLabel(l: PayLine) {
+  if (!l.payBasis || l.payBasis === "monthly") return "";
+  return `${l.units ?? 0} ${l.payBasis === "daily" ? ((l.units ?? 0) === 1 ? "day" : "days") : "h"} × ${money(l.rate ?? 0)}`;
+}
+
+/** Earnings line on payslips. */
+export const basicLabel = (l: PayLine) => (l.payBasis === "daily" ? "Daily wages" : l.payBasis === "hourly" ? "Hourly pay" : "Basic salary");
+
 /**
  * Sri Lanka statutory contributions:
  *  - EPF: employee 8%, employer 12% of basic plus the allowances marked for EPF
  *  - ETF: employer 3% of the same base
  * Both can be switched off globally (settings) or per employee.
  * Allowances and deductions come from the employee's record unless this month's are given.
+ * Day- and hour-paid staff earn `units` × their rate, unless the administrator entered the amount (`basic`).
  */
-export function calcPayLine(e: Employee, s: Settings, otHours: number, month: { allowances?: PayItem[]; deductions?: PayItem[] } = {}): PayLine {
+export function calcPayLine(
+  e: Employee,
+  s: Settings,
+  otHours: number,
+  month: { allowances?: PayItem[]; deductions?: PayItem[]; units?: number; basic?: number } = {},
+): PayLine {
+  const payBasis = payBasisOf(e);
+  const rate = payBasis === "monthly" ? undefined : (e.rate ?? 0);
+  const units = payBasis === "monthly" ? undefined : Math.max(0, month.units ?? 0);
+  const basic = Math.max(0, Math.round(month.basic ?? (rate === undefined ? e.basic : (units ?? 0) * rate)));
   const allowances = cleanItems(month.allowances ?? e.allowances ?? []);
   const deductionItems = cleanItems(month.deductions ?? e.deductions ?? []);
   const allowance = sum(allowances);
   const otPay = Math.round(otHours * e.otRate);
-  const gross = e.basic + allowance + otPay;
-  const base = e.basic + sum(allowances.filter((a) => a.epf));
+  const gross = basic + allowance + otPay;
+  const base = basic + sum(allowances.filter((a) => a.epf));
   const epfOn = s.epfEnabled && e.epf;
   const etfOn = s.etfEnabled && e.etf;
   const epfEmployee = epfOn ? Math.round((base * s.epfEmployeePct) / 100) : 0;
@@ -33,7 +82,10 @@ export function calcPayLine(e: Employee, s: Settings, otHours: number, month: { 
   const deductions = sum(deductionItems);
   return {
     employeeId: e.id,
-    basic: e.basic,
+    basic,
+    payBasis,
+    units,
+    rate,
     allowance,
     allowances,
     otHours,

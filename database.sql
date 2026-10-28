@@ -280,6 +280,9 @@ CREATE TABLE party_packages (
   deposit_pct       numeric(14, 2) NOT NULL,
   includes          text[] NOT NULL DEFAULT '{}',
   active            boolean NOT NULL DEFAULT true,
+  overtime_room_per_hour numeric(14, 2) NOT NULL DEFAULT 0,   -- staying past the end: per hour, charged per started 30 min
+  overtime_full_per_hour numeric(14, 2) NOT NULL DEFAULT 0,
+  overtime_grace_min     integer NOT NULL DEFAULT 10,         -- minutes past the end that are free
   seq               bigserial NOT NULL
 );
 
@@ -316,6 +319,10 @@ CREATE TABLE bookings (
   status      text NOT NULL CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled')),
   source      text NOT NULL CHECK (source IN ('walkin', 'online', 'phone')),
   created_at  timestamptz NOT NULL,
+  checked_in_at   timestamptz,                      -- party arrived (booking QR scanned)
+  checked_out_at  timestamptz,                      -- party left
+  overtime_min    integer,                          -- minutes past the booked end at check-out
+  overtime_charge numeric(14, 2),                   -- charged for them (already in total)
   seq         bigserial NOT NULL,
   CONSTRAINT bookings_ref_unique UNIQUE (ref)
 );
@@ -345,7 +352,10 @@ CREATE TABLE employees (
   phone       text NOT NULL DEFAULT '',
   nic         text NOT NULL DEFAULT '',
   join_date   date NOT NULL,
-  basic       numeric(14, 2) NOT NULL,
+  basic       numeric(14, 2) NOT NULL,             -- monthly basic (permanent staff)
+  employment_type text NOT NULL DEFAULT 'permanent' CHECK (employment_type IN ('permanent', 'non_permanent', 'part_time')),
+  pay_basis   text NOT NULL DEFAULT 'monthly' CHECK (pay_basis IN ('monthly', 'daily', 'hourly')),  -- any employment type can be paid any way
+  rate        numeric(14, 2) NOT NULL DEFAULT 0,   -- pay per day (daily) or per hour (hourly)
   allowances  jsonb NOT NULL DEFAULT '[]',         -- fixed monthly allowances: [{ name, amount, epf }]
   deductions  jsonb NOT NULL DEFAULT '[]',         -- recurring monthly deductions: [{ name, amount }]
   ot_rate     numeric(14, 2) NOT NULL DEFAULT 0,   -- per hour
@@ -356,6 +366,8 @@ CREATE TABLE employees (
   active      boolean NOT NULL DEFAULT true,
   qr_token    text NOT NULL,                       -- badge content: PLAYROOM-STAFF:<qr_token>
   color       text NOT NULL,
+  work_hours  jsonb,                               -- { start, end, days: [0-6], graceMin } for late / early arrivals
+  qualifications jsonb NOT NULL DEFAULT '[]',      -- [{ id, title, institution, year, notes }]
   seq         bigserial NOT NULL,
   CONSTRAINT employees_qr_token_unique UNIQUE (qr_token)
 );
@@ -367,9 +379,37 @@ CREATE TABLE attendance (
   clock_in    timestamptz NOT NULL,
   clock_out   timestamptz,
   method      text NOT NULL CHECK (method IN ('qr', 'manual')),
+  scheduled_in text,                               -- the start time it was measured against ("HH:mm")
+  in_diff_min integer,                             -- minutes after the scheduled start (negative = early)
+  punctuality text CHECK (punctuality IN ('early', 'on_time', 'late', 'off_day')),
   seq         bigserial NOT NULL
 );
 CREATE INDEX attendance_employee_id_date_idx ON attendance (employee_id, date);
+
+-- training sessions the company ran or paid for, and who attended
+CREATE TABLE trainings (
+  id           text PRIMARY KEY,
+  title        text NOT NULL,
+  date         date NOT NULL,
+  trainer      text NOT NULL DEFAULT '',
+  hours        numeric(8, 2) NOT NULL DEFAULT 0,
+  description  text NOT NULL DEFAULT '',
+  employee_ids jsonb NOT NULL DEFAULT '[]',
+  seq          bigserial NOT NULL
+);
+
+-- KPI marks (0-10) per employee and month; the KPIs themselves are in settings
+CREATE TABLE evaluations (
+  id           text PRIMARY KEY,                  -- ev-<employee id>-<yyyy-MM>
+  employee_id  text NOT NULL,
+  period       text NOT NULL,                     -- yyyy-MM
+  scores       jsonb NOT NULL DEFAULT '{}',       -- { <kpi id>: 0-10 }
+  notes        text NOT NULL DEFAULT '',
+  evaluated_by text NOT NULL DEFAULT '',
+  at           timestamptz NOT NULL DEFAULT now(),
+  seq          bigserial NOT NULL
+);
+CREATE INDEX evaluations_employee_id_period_idx ON evaluations (employee_id, period);
 
 CREATE TABLE payroll_runs (
   id         text PRIMARY KEY,
@@ -494,6 +534,10 @@ ALTER TABLE payroll_runs ADD COLUMN IF NOT EXISTS rev bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS payroll_runs_rev_idx ON payroll_runs (rev);
 ALTER TABLE activity ADD COLUMN IF NOT EXISTS rev bigint NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS activity_rev_idx ON activity (rev);
+ALTER TABLE trainings ADD COLUMN IF NOT EXISTS rev bigint NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS trainings_rev_idx ON trainings (rev);
+ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS rev bigint NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS evaluations_rev_idx ON evaluations (rev);
 
 -- deleted records, so screens can drop them too
 CREATE TABLE IF NOT EXISTS deleted_rows (

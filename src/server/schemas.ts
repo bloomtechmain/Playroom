@@ -86,6 +86,7 @@ const bookingFields = {
 };
 export const bookingBody = z.object({ booking: z.object(bookingFields), payNow: money, method: z.union([payMethod, z.literal("online")]) });
 export const payBookingBody = z.object({ amount: money, method: payMethod });
+export const bookingVisitBody = z.object({ action: z.enum(["in", "out"]), waive: z.boolean().optional() });
 export const bookingStatusBody = z.object({ status: z.enum(["pending", "confirmed", "completed", "cancelled"]) });
 
 export const topUpBody = z.object({ amount: money.min(1), method: payMethod });

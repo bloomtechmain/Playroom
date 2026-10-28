@@ -8,6 +8,7 @@ import { insertRow, tableName, toItem, toItems, updateRow, type CollectionKey, t
 import { notFound } from "./http";
 import { commitRev, readVersion, type Changes } from "./rev";
 import { readSettings, saveSettings } from "./snapshot";
+import { forActor } from "./visibility";
 
 const iso = () => new Date().toISOString();
 
@@ -21,6 +22,12 @@ export function diff(a: Record<string, unknown>, b: Record<string, unknown>) {
     // secrets never go into the audit trail
     if (k === "qrToken") {
       if (x !== y) out.push("badge re-issued");
+      continue;
+    }
+    // working hours and arrivals are for administrators only; the audit log is read more widely
+    if (k === "scheduledIn" || k === "inDiffMin" || k === "punctuality") continue;
+    if (k === "workHours") {
+      if (JSON.stringify(x) !== JSON.stringify(y)) out.push("working hours changed");
       continue;
     }
     if (typeof y === "object" || typeof x === "object") {
@@ -142,7 +149,7 @@ export class Mut {
   async toPatch(rev: number): Promise<Patch> {
     if (this.reload) return { rev, reload: true };
     const patch: Patch = { rev, upsert: {}, remove: {} };
-    for (const [k, m] of this.upserts) (patch.upsert as Record<string, unknown[]>)[k] = [...m.values()];
+    for (const [k, m] of this.upserts) (patch.upsert as Record<string, unknown[]>)[k] = forActor(this.actor, k, [...m.values()]);
     for (const [k, ids] of this.removes) if (ids.size) (patch.remove as Record<string, string[]>)[k] = [...ids];
     if (this.settingsChanged) patch.settings = await readSettings(this.tx);
     return patch;

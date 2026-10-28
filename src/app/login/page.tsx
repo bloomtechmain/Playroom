@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CREDIT, CREDIT_PHONE, CREDIT_URL } from "@/lib/credit";
 import { useRouter } from "next/navigation";
 import { useBoot, useStore } from "@/lib/store";
 import { useHydrated } from "@/lib/hooks";
@@ -86,6 +87,9 @@ function Login() {
               <Button className="w-full" onClick={() => setMode("login")}>Back to sign in</Button>
             </div>
           )}
+          <p className="mt-10 text-center text-xs text-muted">
+            <a href={CREDIT_URL} target="_blank" rel="noopener noreferrer" className="hover:text-navy hover:underline">{CREDIT}</a> · {CREDIT_PHONE}
+          </p>
         </div>
       </div>
     </div>

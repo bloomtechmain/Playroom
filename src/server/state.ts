@@ -6,6 +6,7 @@ import type { Actor } from "./auth";
 import { COLLECTION_KEYS, isCollection, tableName, toItems, type CollectionKey } from "./collections";
 import { db } from "./db";
 import { readVersion, type Version } from "./rev";
+import { forActor } from "./visibility";
 import { readCollection, readSettings } from "./snapshot";
 
 /** Sensitive collections are only sent to roles that have a screen for them. */
@@ -14,6 +15,9 @@ const NEEDS: Partial<Record<CollectionKey, string[]>> = {
   payroll: ["payroll.view"],
   employees: ["hr.view", "hr.edit", "payroll.view"],
   attendance: ["hr.view", "hr.edit", "payroll.view"],
+  trainings: ["hr.view", "hr.edit"],
+  // KPI marks: administrators and the owner only
+  evaluations: ["hr.evaluate"],
 };
 
 export interface AppState {
@@ -27,13 +31,6 @@ export interface StateChanges {
   rev: number;
   currentUserId: string;
   patch: Patch;
-}
-
-/** Fields a role may not see, removed from every row it's sent. */
-function forActor(actor: Actor, key: CollectionKey, items: unknown[]) {
-  // badge tokens clock people in at the QR reader: only those who manage staff records see them
-  if (key === "employees" && !actor.can("hr.edit")) return (items as { qrToken: string }[]).map((e) => ({ ...e, qrToken: "" }));
-  return items;
 }
 
 const allowed = (actor: Actor, key: CollectionKey) => !NEEDS[key] || NEEDS[key]!.some((p) => actor.can(p));

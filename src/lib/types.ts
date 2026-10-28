@@ -210,6 +210,11 @@ export interface PartyPackage {
   depositPct: number;
   includes: string[];
   active: boolean;
+  /** staying past the booked end: price per hour (charged per started 30 min) for the party room / the whole venue */
+  overtimeRoomPerHour?: number;
+  overtimeFullPerHour?: number;
+  /** minutes past the end that are free */
+  overtimeGraceMin?: number;
 }
 
 export interface Addon {
@@ -246,6 +251,14 @@ export interface Booking {
   status: BookingStatus;
   source: "walkin" | "online" | "phone";
   createdAt: string;
+  /** the party arrived (booking QR scanned at the venue) */
+  checkedInAt?: string;
+  /** the party left; any overtime was added to `total` then */
+  checkedOutAt?: string;
+  /** minutes past the booked end at check-out */
+  overtimeMin?: number;
+  /** charged for those minutes (0 when waived), already in `total` */
+  overtimeCharge?: number;
 }
 
 export interface Shift {
@@ -316,7 +329,14 @@ export interface Employee {
   phone: string;
   nic: string;
   joinDate: string;
+  /** monthly basic salary (permanent staff) */
   basic: number;
+  /** absent on records from before employment types = permanent */
+  employmentType?: EmploymentType;
+  /** how they're paid, whatever the employment type; absent = monthly */
+  payBasis?: PayBasis;
+  /** pay per day (daily) or per hour (hourly) */
+  rate?: number;
   /** fixed monthly allowances */
   allowances: PayItem[];
   /** recurring monthly deductions (loan instalments, welfare fund…) */
@@ -329,7 +349,69 @@ export interface Employee {
   active: boolean;
   qrToken: string;
   color: string;
+  /** scheduled hours, for late / early arrivals — only sent to roles with "hr.hours" */
+  workHours?: WorkHours;
+  /** degrees, diplomas, professional certificates */
+  qualifications?: Qualification[];
 }
+
+export interface Qualification {
+  id: string;
+  title: string;
+  institution: string;
+  /** year obtained (or "Reading") */
+  year: string;
+  notes?: string;
+}
+
+/** A training session the company ran or paid for, and who attended it. */
+export interface Training {
+  id: string;
+  title: string;
+  date: string;
+  trainer: string;
+  hours: number;
+  description: string;
+  employeeIds: string[];
+}
+
+/** A performance measure the business scores staff on (Settings → kpis). */
+export interface Kpi {
+  id: string;
+  name: string;
+  description?: string;
+  /** relative importance in the overall score */
+  weight: number;
+  active: boolean;
+}
+
+/** One employee's KPI marks (0–10) for a month. One per employee and month: id = ev-<employeeId>-<yyyy-MM>. */
+export interface Evaluation {
+  id: string;
+  employeeId: string;
+  period: string;
+  /** KPI id → mark 0–10 */
+  scores: Record<string, number>;
+  notes: string;
+  evaluatedBy: string;
+  at: string;
+}
+
+export interface WorkHours {
+  /** "HH:mm" */
+  start: string;
+  end: string;
+  /** working days, 0 = Sunday … 6 = Saturday */
+  days: number[];
+  /** minutes either side of the start time that still count as on time */
+  graceMin: number;
+}
+
+/** what kind of employee they are — pay is chosen separately (PayBasis): monthly salary, per day or per hour */
+export type EmploymentType = "permanent" | "non_permanent" | "part_time";
+export type PayBasis = "monthly" | "daily" | "hourly";
+
+export type Punctuality = "early" | "on_time" | "late" | "off_day";
 
 export interface Attendance {
   id: string;
@@ -338,11 +420,23 @@ export interface Attendance {
   clockIn: string;
   clockOut?: string;
   method: "qr" | "manual";
+  /** arrival against the employee's working hours, worked out by the server at clock-in (only sent to roles with "hr.hours") */
+  scheduledIn?: string;
+  /** minutes after the scheduled start (negative = before it) */
+  inDiffMin?: number;
+  punctuality?: Punctuality;
 }
 
 export interface PayLine {
   employeeId: string;
+  /** monthly salary, or days / hours × rate (or the amount the administrator entered) */
   basic: number;
+  /** absent on runs from before employment types = monthly */
+  payBasis?: PayBasis;
+  /** days (daily) or hours (hourly) paid for */
+  units?: number;
+  /** pay per day / hour when the run was prepared */
+  rate?: number;
   /** total of `allowances` */
   allowance: number;
   /** this month's allowances (older runs only stored the total — see payroll.ts lineAllowances) */
@@ -401,6 +495,10 @@ export interface Settings {
   epfIncludesAllowance: boolean;
   workStart: string;
   standardHours: number;
+  /** what staff are scored on (Performance) */
+  kpis?: Kpi[];
+  /** weight of the attendance score (arrivals on time) in the overall performance score; 0 = left out, absent = 1 */
+  attendanceWeight?: number;
   openingCash: number;
   /** income tax on profit, % — the P&L estimates tax at this rate; 0/absent = only tax payments recorded as expenses */
   incomeTaxPct?: number;

@@ -91,6 +91,8 @@ interface State extends Collections {
   createBooking: (b: Omit<Booking, "id" | "ref" | "createdAt">, payNow: number, method: PayMethod | "online") => Promise<Booking | null>;
   payBooking: (id: string, amount: number, method: PayMethod) => Promise<boolean>;
   setBookingStatus: (id: string, status: Booking["status"]) => Promise<boolean>;
+  /** party arrives (booking QR scanned) / leaves — leaving late adds the overtime to the bill */
+  partyVisit: (id: string, action: "in" | "out", waive?: boolean) => Promise<boolean>;
   bookOnline: (input: PublicBookingInput) => Promise<{ booking?: Booking; error?: string }>;
 
   // hr
@@ -101,7 +103,7 @@ interface State extends Collections {
 }
 
 const EMPTY: Collections = {
-  roles: [], users: [], zones: [], ratePlans: [], rules: [], promotions: [], customers: [], children: [], tickets: [], transactions: [], products: [], sales: [], packages: [], addons: [], bookings: [], shifts: [], refunds: [], expenses: [], employees: [], attendance: [], payroll: [], activity: [],
+  roles: [], users: [], zones: [], ratePlans: [], rules: [], promotions: [], customers: [], children: [], tickets: [], transactions: [], products: [], sales: [], packages: [], addons: [], bookings: [], shifts: [], refunds: [], expenses: [], employees: [], attendance: [], payroll: [], activity: [], trainings: [], evaluations: [],
 };
 const EMPTY_SETTINGS = { holidays: [], backups: [] } as unknown as Settings;
 
@@ -328,6 +330,7 @@ export const useStore = create<State>()((set, get) => {
     createBooking: (booking, payNow, method) => act<Booking>("/api/bookings", { booking, payNow, method }),
     payBooking: async (id, amount, method) => (await act(`/api/bookings/${id}/pay`, { amount, method })) !== null,
     setBookingStatus: async (id, status) => (await act(`/api/bookings/${id}/status`, { status })) !== null,
+    partyVisit: async (id, action, waive) => (await act(`/api/bookings/${id}/visit`, { action, waive })) !== null,
     bookOnline: async (input) => {
       try {
         const { booking } = await api<{ booking: Booking }>("/api/public/booking", { body: input });

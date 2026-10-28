@@ -10,6 +10,10 @@ import { PrintModal, SaleReceipt } from "@/components/Receipts";
 import { saleDoc } from "@/lib/receiptDocs";
 import RefundDialog from "@/components/RefundDialog";
 
+/** Starting categories; any category a product already uses (or a new one typed in) is offered too, and the POS shows it as a tab. */
+const DEFAULT_CATEGORIES = ["Drinks", "Café", "Snacks", "Socks & Gear", "Toys"];
+const NEW_CATEGORY = "__new";
+
 export default function ProductsPage() {
   const can = useCan();
   if (!can("products.edit") && !can("pos.sell")) return <NoAccess what="products" />;
@@ -33,6 +37,8 @@ function Products() {
   const save = useStore((s) => s.save);
   const me = useStore((s) => s.currentUserId);
   const [edit, setEdit] = useState<Product | null>(null);
+  /** typing a new category instead of choosing one */
+  const [newCat, setNewCat] = useState<string | null>(null);
   const [recv, setRecv] = useState<Product | null>(null);
   const [qty, setQty] = useState("24");
   const [unitCost, setUnitCost] = useState("");
@@ -40,6 +46,27 @@ function Products() {
   const [low, setLow] = useState(false);
   const list = products.filter((p) => !low || p.stock <= p.reorderAt);
   const stockValue = products.reduce((a, p) => a + p.stock * p.cost, 0);
+
+  const categories = [...new Set([...DEFAULT_CATEGORIES, ...products.map((p) => p.category).filter(Boolean)])];
+  const openEdit = (p: Product) => {
+    setNewCat(null);
+    setEdit(p);
+  };
+  const saveProduct = () => {
+    if (!edit) return;
+    if (!edit.name.trim()) return toast("Enter the product name", "err");
+    let category = edit.category;
+    if (newCat !== null) {
+      const typed = newCat.trim();
+      if (!typed) return toast("Enter the new category", "err");
+      // "snacks" is the existing "Snacks", not a second category
+      category = categories.find((c) => c.toLowerCase() === typed.toLowerCase()) ?? typed;
+    }
+    const item = { ...edit, name: edit.name.trim(), category, id: edit.id || uid("p") };
+    save("products", item, "Products", item.name);
+    toast(newCat !== null && !categories.includes(category) ? `Product saved in the new “${category}” category` : "Product saved");
+    setEdit(null);
+  };
 
   const receive = () => {
     if (!recv) return;
@@ -62,7 +89,7 @@ function Products() {
       <Card
         pad={false}
         title={<span className="flex items-center gap-3">Catalogue <Toggle checked={low} onChange={setLow} label={<span className="text-xs text-muted">Low stock only</span>} /></span>}
-        action={<Button size="sm" icon={<Plus size={14} />} onClick={() => setEdit({ id: "", name: "", category: "Snacks", sku: `PR-${1001 + products.length}`, price: 0, cost: 0, stock: 0, reorderAt: 8, active: true })}>Add product</Button>}
+        action={<Button size="sm" icon={<Plus size={14} />} onClick={() => openEdit({ id: "", name: "", category: "Snacks", sku: `PR-${1001 + products.length}`, price: 0, cost: 0, stock: 0, reorderAt: 8, active: true })}>Add product</Button>}
       >
         <Table head={["Product", "SKU", "Category", "Price", "Cost", "Margin", "Stock", ""]}>
           {list.map((p) => (
@@ -77,7 +104,7 @@ function Products() {
               <td>
                 <div className="flex justify-end gap-1">
                   <button title="Receive stock" onClick={() => { setRecv(p); setUnitCost(String(p.cost)); }} className="rounded-lg p-1.5 text-muted hover:bg-mint-soft hover:text-[#2f8f72]"><PackagePlus size={15} /></button>
-                  <button title="Edit" onClick={() => setEdit(p)} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><Pencil size={15} /></button>
+                  <button title="Edit" onClick={() => openEdit(p)} className="rounded-lg p-1.5 text-muted hover:bg-sky-soft hover:text-navy"><Pencil size={15} /></button>
                 </div>
               </td>
             </tr>
@@ -85,14 +112,22 @@ function Products() {
         </Table>
       </Card>
       {edit && (
-        <Modal open onClose={() => setEdit(null)} title={edit.id ? `Edit ${edit.name}` : "New product"} footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Cancel</Button><Button onClick={() => { if (!edit.name) return; const item = edit.id ? edit : { ...edit, id: uid("p") }; save("products", item, "Products", item.name); toast("Product saved"); setEdit(null); }}>Save</Button></>}>
+        <Modal open onClose={() => setEdit(null)} title={edit.id ? `Edit ${edit.name}` : "New product"} footer={<><Button variant="secondary" onClick={() => setEdit(null)}>Cancel</Button><Button onClick={saveProduct}>Save</Button></>}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Name" className="sm:col-span-2"><Input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="SKU / barcode"><Input value={edit.sku} onChange={(e) => setEdit({ ...edit, sku: e.target.value })} /></Field>
-            <Field label="Category">
-              <Select value={edit.category} onChange={(e) => setEdit({ ...edit, category: e.target.value })}>
-                {["Drinks", "Café", "Snacks", "Socks & Gear", "Toys"].map((c) => <option key={c}>{c}</option>)}
-              </Select>
+            <Field
+              label="Category"
+              hint={newCat !== null && <button type="button" className="font-bold text-navy hover:underline" onClick={() => setNewCat(null)}>Choose an existing category</button>}
+            >
+              {newCat !== null ? (
+                <Input autoFocus value={newCat} placeholder="e.g. Party supplies" onChange={(e) => setNewCat(e.target.value)} />
+              ) : (
+                <Select value={edit.category} onChange={(e) => (e.target.value === NEW_CATEGORY ? setNewCat("") : setEdit({ ...edit, category: e.target.value }))}>
+                  {categories.map((c) => <option key={c}>{c}</option>)}
+                  <option value={NEW_CATEGORY}>+ New category…</option>
+                </Select>
+              )}
             </Field>
             <Field label="Selling price (Rs.)"><Input type="number" value={edit.price} onChange={(e) => setEdit({ ...edit, price: Number(e.target.value) })} /></Field>
             <Field label="Cost price (Rs.)"><Input type="number" value={edit.cost} onChange={(e) => setEdit({ ...edit, cost: Number(e.target.value) })} /></Field>

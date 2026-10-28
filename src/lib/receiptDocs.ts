@@ -1,6 +1,9 @@
 import type { PrintBlock } from "./printAgent";
+import { bookingQr } from "./booking";
 import { useStore } from "./store";
-import type { Booking, Sale, Ticket } from "./types";
+import type { Booking, Sale, Shift, Ticket } from "./types";
+import { shiftSummary } from "./shift";
+import { CREDIT, CREDIT_PHONE } from "./credit";
 import { stayMinutes } from "./pricing";
 import { fmtDate, fmtDT, fmtTime, methodLabel, minsToLabel } from "./utils";
 
@@ -11,6 +14,8 @@ const first = (name?: string) => name?.split(" ")[0] ?? "";
 const row = (left: string, right: string | number | undefined, bold?: boolean): PrintBlock => ({ type: "row", left, right: String(right ?? ""), bold });
 const hr: PrintBlock = { type: "hr" };
 const center = (text: string, extra: Partial<Extract<PrintBlock, { type: "text" }>> = {}): PrintBlock => ({ type: "text", text, align: "center", ...extra });
+/** Last lines of every customer receipt. */
+const credit = (): PrintBlock[] => [center(CREDIT), center(CREDIT_PHONE)];
 
 function head(): PrintBlock[] {
   const s = useStore.getState().settings;
@@ -62,6 +67,7 @@ export function ticketDoc(tickets: Ticket[], copy?: boolean): PrintBlock[] {
     hr,
     center(`Served by ${first(st.users.find((u) => u.id === t.createdBy)?.name)}`),
     center(st.settings.receiptFooter, { bold: true }),
+    ...credit(),
   );
   return out;
 }
@@ -80,7 +86,7 @@ export function saleDoc(s: Sale): PrintBlock[] {
   if (s.discount > 0) out.push(row("Discount", `-${n(s.discount)}`));
   out.push(row("TOTAL (LKR)", n(s.total), true), row(methodLabel[s.method], n(s.method === "cash" ? s.tendered : s.total)));
   if (s.method === "cash") out.push(row("Change", n(s.tendered - s.total)));
-  out.push(hr, center(`Items: ${s.items.reduce((a, i) => a + i.qty, 0)}`), center(st.settings.receiptFooter, { bold: true }));
+  out.push(hr, center(`Items: ${s.items.reduce((a, i) => a + i.qty, 0)}`), center(st.settings.receiptFooter, { bold: true }), ...credit());
   return out;
 }
 
@@ -91,7 +97,7 @@ export function bookingDoc(b: Booking): PrintBlock[] {
   const out: PrintBlock[] = [
     ...head(),
     center("BOOKING CONFIRMATION", { bold: true }),
-    { type: "qr", data: b.ref, size: 6 },
+    { type: "qr", data: bookingQr(b), size: 6 },
     center(b.ref, { bold: true }),
     hr,
     row("Name", c?.name),
@@ -100,6 +106,39 @@ export function bookingDoc(b: Booking): PrintBlock[] {
   if (pk) out.push(row("Package", pk.name));
   out.push(row("Date", b.date), row("Time", `${b.start} - ${b.end}`), row("Guests", b.guests));
   if (b.theme) out.push(row("Theme", b.theme));
-  out.push(hr, row("Total", n(b.total)), row("Paid", n(b.paid)), row("Balance due", n(b.total - b.paid), true));
+  out.push(hr, row("Total", n(b.total)), row("Paid", n(b.paid)), row("Balance due", n(b.total - b.paid), true), hr, ...credit());
+  return out;
+}
+
+/** Shift-end slip (the on-screen version is ShiftReport in app/(app)/shifts/page.tsx). */
+export function shiftDoc(sh: Shift): PrintBlock[] {
+  const st = useStore.getState();
+  const r = shiftSummary(sh, st.transactions);
+  const out: PrintBlock[] = [
+    center(st.settings.businessName, { bold: true, size: 2 }),
+    center("SHIFT REPORT", { bold: true }),
+    hr,
+    row("Cashier", st.users.find((u) => u.id === sh.userId)?.name),
+    row("Opened", fmtDT(sh.openedAt)),
+    row("Closed", sh.closedAt ? fmtDT(sh.closedAt) : "OPEN"),
+    hr,
+    ...Object.entries(r.by).map(([k, v]) => row(methodLabel[k] ?? k, n(v))),
+    row("Gross takings", n(r.total), true),
+    row("Refunds", r.refunds ? `-${n(r.refunds)}` : "0"),
+    row(`Discounts (${r.discountTx.length})`, n(r.discounts)),
+    hr,
+    row("Opening float", n(sh.openingFloat)),
+    row("+ Cash sales", n(r.cashSales)),
+    row("- Cash refunds", n(r.cashRefunds)),
+    row("Expected cash", n(r.expected), true),
+    row("Counted cash", sh.countedCash != null ? n(sh.countedCash) : "-"),
+    row("VARIANCE", r.variance != null ? n(r.variance) : "-", true),
+  ];
+  if (sh.notes) out.push({ type: "text", text: `Note: ${sh.notes}` });
+  if (r.discountTx.length) {
+    out.push(hr, { type: "text", text: "Discount audit", bold: true });
+    [...r.discountTx].sort((x, y) => x.at.localeCompare(y.at)).slice(0, 15).forEach((t) => out.push(row(`${fmtTime(t.at)} ${t.refLabel}`, n(t.discount))));
+  }
+  out.push(hr, row("Cashier signature", ""), { type: "feed", lines: 2 }, row("Checked by", ""));
   return out;
 }

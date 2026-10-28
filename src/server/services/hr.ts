@@ -1,5 +1,6 @@
 import "server-only";
 import type { Employee, User } from "@/lib/types";
+import { arrivalOf } from "@/lib/punctuality";
 import { fmtTime, tempPassword, today, uid } from "@/lib/utils";
 import { toItem } from "../collections";
 import { badRequest, HttpError } from "../http";
@@ -33,7 +34,8 @@ export async function clockByToken(m: Mut, token: string, direction?: "in" | "ou
     await m.log("HR", "Clock out", `${e.name} (QR)`);
     return { ok: true, message: "Clocked out. Thanks for today!", name: e.name, direction: "out" };
   }
-  await m.insert("attendance", { id: uid("at"), employeeId: e.id, date: d, clockIn: new Date().toISOString(), method: "qr" });
+  const clockIn = new Date().toISOString();
+  await m.insert("attendance", { id: uid("at"), employeeId: e.id, date: d, clockIn, method: "qr", ...arrivalOf(e.workHours, clockIn) });
   await m.log("HR", "Clock in", `${e.name} (QR)`);
   return { ok: true, message: "Clocked in. Have a great shift!", name: e.name, direction: "in" };
 }

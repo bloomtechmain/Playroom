@@ -2,11 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameMonth, startOfMonth, startOfWeek, subMonths } from "date-fns";
-import { ChevronLeft, ChevronRight, Lock, Pencil, Plus, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, DoorOpen, Lock, LogIn, Pencil, Plus, Printer, ScanLine } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import type { Addon, Booking, PartyPackage, PayMethod } from "@/lib/types";
-import { bookingConflict, partyPrice, toHHMM } from "@/lib/booking";
-import { cx, money, timeToMin, today, uid, fmtDT } from "@/lib/utils";
+import { bookingConflict, OVERTIME_BLOCK_MIN, overtimeFor, partyPrice, refFromQr, toHHMM } from "@/lib/booking";
+import { cx, fmtTime, money, timeToMin, today, uid, fmtDT } from "@/lib/utils";
+import { useNow } from "@/lib/hooks";
+import QRScanner from "@/components/QRScanner";
 import { Badge, Button, Card, Empty, Field, Input, Modal, NoAccess, PageHeader, Select, Table, Tabs, Textarea, Toggle, toast, Counter } from "@/components/ui";
 import { CustomerPicker } from "@/components/CustomerPicker";
 import { PaymentPicker } from "@/components/Payment";
@@ -28,12 +30,19 @@ function Inner() {
   const [creating, setCreating] = useState<{ date: string } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const canVisit = can("bookings.edit") || can("tickets.sell");
   return (
     <>
       <PageHeader
         title="Bookings & Parties"
         subtitle="Master calendar for parties, full-venue hires and play reservations."
-        actions={can("bookings.edit") && <Button icon={<Plus size={16} />} onClick={() => setCreating({ date: today() })}>New booking</Button>}
+        actions={
+          <>
+            {canVisit && <Button variant="secondary" icon={<ScanLine size={16} />} onClick={() => setScanning(true)}>Scan party QR</Button>}
+            {can("bookings.edit") && <Button icon={<Plus size={16} />} onClick={() => setCreating({ date: today() })}>New booking</Button>}
+          </>
+        }
       />
       <div className="mb-5">
         <Tabs value={tab} onChange={setTab} items={[{ value: "calendar", label: "Calendar" }, { value: "list", label: "All bookings" }, { value: "packages", label: "Packages & add-ons" }]} />
@@ -44,6 +53,7 @@ function Inner() {
       {creating && <NewBooking date={creating.date} onClose={() => setCreating(null)} onCreated={(id) => { setCreating(null); setOpen(id); }} />}
       {editing && <NewBooking date={today()} existingId={editing} onClose={() => setEditing(null)} onCreated={(id) => { setEditing(null); setOpen(id); }} />}
       {open && !editing && <BookingDetail id={open} onClose={() => setOpen(null)} onEdit={() => setEditing(open)} />}
+      {scanning && <ScanBooking onClose={() => setScanning(false)} onFound={(id) => { setScanning(false); setOpen(id); }} />}
     </>
   );
 }
@@ -202,7 +212,7 @@ function List({ onOpen }: { onOpen: (id: string) => void }) {
             <td className="tabular">{money(b.total)}</td>
             <td className="tabular">{money(b.paid)}</td>
             <td className={cx("tabular font-bold", b.total - b.paid > 0 && "text-[#c24f69]")}>{money(b.total - b.paid)}</td>
-            <td><Badge tone={STATUS_TONE[b.status]}><span className="capitalize">{b.status}</span></Badge></td>
+            <td>{b.checkedInAt && !b.checkedOutAt ? <Badge tone="mint">Party in now</Badge> : <Badge tone={STATUS_TONE[b.status]}><span className="capitalize">{b.status}</span></Badge>}</td>
           </tr>
         ))}
       </Table>
@@ -447,9 +457,11 @@ function BookingDetail({ id, onClose, onEdit }: { id: string; onClose: () => voi
           {b.addonIds.length > 0 && <R l="Extras" r={b.addonIds.map((a) => addons.find((x) => x.id === a)?.name).join(", ")} />}
           {pk && <R l="Includes" r={pk.includes.join(", ")} />}
           {b.notes && <R l="Notes" r={b.notes} />}
+          {b.kind === "party" && <PartyVisit b={b} pk={pk} />}
         </div>
         <div className="rounded-2xl bg-[#faf7f1] p-4">
           {b.adjustment ? <R l="Manual adjustment" r={money(b.adjustment)} /> : null}
+          {b.overtimeCharge ? <R l={`Overtime (${b.overtimeMin} min over)`} r={money(b.overtimeCharge)} /> : null}
           <R l="Total" r={money(b.total)} />
           <R l="Paid" r={money(b.paid)} />
           <div className="mt-1 flex justify-between border-t border-line pt-2 font-bold"><span>Balance</span><span className={cx("tabular", bal > 0 && "text-[#c24f69]")}>{money(bal)}</span></div>
@@ -458,7 +470,7 @@ function BookingDetail({ id, onClose, onEdit }: { id: string; onClose: () => voi
               {tx.map((t) => <div key={t.id} className="flex justify-between"><span>{fmtDT(t.at)} · {t.type}</span><span className="tabular">{money(t.amount)}</span></div>)}
             </div>
           )}
-          {bal > 0 && b.status !== "cancelled" && can("bookings.edit") && (
+          {bal > 0 && b.status !== "cancelled" && (can("bookings.edit") || can("tickets.sell")) && (
             <div className="mt-3 space-y-2 border-t border-line pt-3">
               <Input type="number" placeholder={`Amount (balance ${bal})`} value={amt} onChange={(e) => setAmt(e.target.value)} />
               <PaymentPicker method={method} onMethod={setMethod} total={amount} walletBalance={c?.wallet} />
@@ -483,6 +495,96 @@ function BookingDetail({ id, onClose, onEdit }: { id: string; onClose: () => voi
   );
 }
 
+/** Find a booking from its QR (or a typed reference) at the venue. */
+function ScanBooking({ onClose, onFound }: { onClose: () => void; onFound: (id: string) => void }) {
+  const bookings = useStore((s) => s.bookings);
+  const [code, setCode] = useState("");
+  const [msg, setMsg] = useState("");
+  const find = (text: string) => {
+    const ref = refFromQr(text);
+    if (!ref) return;
+    const b = bookings.find((x) => x.ref.toUpperCase() === ref);
+    if (!b) return setMsg(`No booking ${ref}`);
+    if (b.date !== today()) toast(`${b.ref} is booked for ${b.date}, not today`, "err");
+    onFound(b.id);
+  };
+  return (
+    <Modal open onClose={onClose} title="Scan party QR" width="max-w-md">
+      <QRScanner onScan={find} height={240} />
+      <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); find(code); }}>
+        <Input autoFocus placeholder="Scan with the QR reader or type BK-1005" value={code} onChange={(e) => { setCode(e.target.value); setMsg(""); }} />
+        <Button type="submit">Find</Button>
+      </form>
+      {msg && <p className="mt-2 text-sm font-bold text-[#c24f69]">{msg}</p>}
+      <p className="mt-3 text-xs text-muted">The QR on the customer&apos;s booking confirmation holds the reference, date and booked time.</p>
+    </Modal>
+  );
+}
+
+/** Arrival and departure for a party; leaving after the booked end adds overtime to the bill. */
+function PartyVisit({ b, pk }: { b: Booking; pk?: PartyPackage }) {
+  const can = useCan();
+  const visit = useStore((s) => s.partyVisit);
+  const now = useNow(30000);
+  const [out, setOut] = useState(false);
+  const [waive, setWaive] = useState(false);
+  const canVisit = can("bookings.edit") || can("tickets.sell");
+  const live = overtimeFor(b, pk, now);
+  const rate = (b.mode === "full" ? pk?.overtimeFullPerHour : pk?.overtimeRoomPerHour) ?? 0;
+
+  if (b.checkedOutAt)
+    return (
+      <div className="mt-3 rounded-xl bg-sky-soft px-3 py-2">
+        <div className="font-bold">Party visit</div>
+        <div>In {fmtTime(b.checkedInAt!)} · out {fmtTime(b.checkedOutAt)} · booked until {b.end}</div>
+        <div className="text-xs text-muted">{b.overtimeMin ? `${b.overtimeMin} min over — ${b.overtimeCharge ? `overtime ${money(b.overtimeCharge)} added to the bill` : "no overtime charged"}` : "Left on time"}</div>
+      </div>
+    );
+  if (b.checkedInAt)
+    return (
+      <div className={cx("mt-3 rounded-xl px-3 py-2", live.charge ? "bg-rose-soft" : "bg-mint-soft")}>
+        <div className="font-bold">Party in since {fmtTime(b.checkedInAt)}</div>
+        <div>Booked until <b>{b.end}</b>{live.minutes > 0 && <> · <b>{live.minutes} min over</b></>}</div>
+        {live.minutes > 0 && <div className="text-xs">{live.charge ? `Overtime so far ${money(live.charge)} (${live.billedMinutes} min at ${money(rate)}/h)` : `Free for ${live.grace} min after the end`}</div>}
+        {canVisit && <Button size="sm" className="mt-2" icon={<DoorOpen size={14} />} onClick={() => { setWaive(false); setOut(true); }}>Check out party</Button>}
+        {out && (() => {
+          const ot = overtimeFor(b, pk, new Date());
+          const charge = waive ? 0 : ot.charge;
+          return (
+            <Modal open onClose={() => setOut(false)} title={`Check out ${b.ref}`} footer={<><Button variant="secondary" onClick={() => setOut(false)}>Cancel</Button><Button onClick={async () => { if (await visit(b.id, "out", waive)) { setOut(false); toast(charge ? `Checked out — overtime ${money(charge)} added to the bill` : "Checked out"); } }}>Check out{charge ? ` & add ${money(charge)}` : ""}</Button></>}>
+              <div className="space-y-1.5 text-sm">
+                <R l="Booked" r={`${b.start} – ${b.end}`} />
+                <R l="Arrived" r={fmtTime(b.checkedInAt!)} />
+                <R l="Leaving" r={fmtTime(new Date().toISOString())} />
+                <R l="Over the booked time" r={ot.minutes ? `${ot.minutes} min` : "—"} />
+                {ot.minutes > 0 && <R l="Charged as" r={ot.charge ? `${ot.billedMinutes / OVERTIME_BLOCK_MIN} × ${OVERTIME_BLOCK_MIN} min at ${money(rate)}/h` : `within the ${ot.grace} min grace`} />}
+                <div className="flex justify-between border-t border-line pt-2 font-bold"><span>Overtime to add</span><span className="tabular">{money(charge)}</span></div>
+              </div>
+              {ot.charge > 0 && can("price.override") && <div className="mt-3"><Toggle checked={waive} onChange={setWaive} label="Waive the overtime" /></div>}
+              {ot.charge > 0 && <p className="mt-2 text-xs text-muted">The overtime is added to the booking and the balance is collected in the payment panel.</p>}
+              {!rate && ot.minutes > 0 && <p className="mt-2 text-xs text-muted">This package has no overtime rate — set one under Packages &amp; add-ons.</p>}
+            </Modal>
+          );
+        })()}
+      </div>
+    );
+  if (b.status !== "pending" && b.status !== "confirmed") return null;
+  return (
+    <div className="mt-3 rounded-xl bg-[#faf7f1] px-3 py-2">
+      <div className="font-bold">Party visit</div>
+      {b.date === today() ? (
+        <>
+          <div className="text-xs text-muted">Booked {b.start} – {b.end}{rate ? ` · overtime ${money(rate)}/h after ${pk?.overtimeGraceMin ?? 10} min` : ""}</div>
+          {b.status === "pending" && <div className="text-xs font-bold text-[#a8741a]">Deposit not paid yet</div>}
+          {canVisit && <Button size="sm" className="mt-2" variant="success" icon={<LogIn size={14} />} onClick={async () => { if (await visit(b.id, "in")) toast(`${b.ref} checked in`); }}>Check in party</Button>}
+        </>
+      ) : (
+        <div className="text-xs text-muted">Check-in opens on {b.date}.</div>
+      )}
+    </div>
+  );
+}
+
 const R = ({ l, r }: { l: string; r: React.ReactNode }) => <div className="flex justify-between gap-4"><span className="text-muted">{l}</span><span className="text-right">{r}</span></div>;
 
 function Packages() {
@@ -495,7 +597,7 @@ function Packages() {
   const [edit, setEdit] = useState<PartyPackage | null>(null);
   const [ad, setAd] = useState<Addon | null>(null);
   const editable = can("packages.edit");
-  const newPackage = (): PartyPackage => ({ id: "", name: "", roomZoneId: rooms[0]?.id ?? "", guestLimit: 15, durationMin: 180, priceRoomOnly: 0, priceFullVenue: 0, extraGuestPrice: 0, depositPct: 30, includes: [], active: true });
+  const newPackage = (): PartyPackage => ({ id: "", name: "", roomZoneId: rooms[0]?.id ?? "", guestLimit: 15, durationMin: 180, priceRoomOnly: 0, priceFullVenue: 0, extraGuestPrice: 0, depositPct: 30, includes: [], active: true, overtimeRoomPerHour: 0, overtimeFullPerHour: 0, overtimeGraceMin: 10 });
   return (
     <>
       {editable && (
@@ -518,6 +620,11 @@ function Packages() {
               <div className="rounded-xl bg-rose-soft p-3"><div className="text-xs text-[#b5435e]">Full venue</div><div className="font-display text-lg font-semibold">{money(p.priceFullVenue)}</div></div>
             </div>
             <div className="mt-2 text-xs text-muted">Extra guests {money(p.extraGuestPrice)} each</div>
+            <div className="text-xs text-muted">
+              {p.overtimeRoomPerHour || p.overtimeFullPerHour
+                ? `Overtime ${money(p.overtimeRoomPerHour ?? 0)}/h room · ${money(p.overtimeFullPerHour ?? 0)}/h full venue · after ${p.overtimeGraceMin ?? 10} min`
+                : "No overtime rate set"}
+            </div>
             <ul className="mt-3 space-y-1 text-sm">
               {p.includes.map((i) => <li key={i} className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-mint" />{i}</li>)}
             </ul>
@@ -559,6 +666,9 @@ function Packages() {
             <Field label="Price — party room only"><Input type="number" value={edit.priceRoomOnly} onChange={(e) => setEdit({ ...edit, priceRoomOnly: Number(e.target.value) })} /></Field>
             <Field label="Price — full venue"><Input type="number" value={edit.priceFullVenue} onChange={(e) => setEdit({ ...edit, priceFullVenue: Number(e.target.value) })} /></Field>
             <Field label="Extra guest price"><Input type="number" value={edit.extraGuestPrice} onChange={(e) => setEdit({ ...edit, extraGuestPrice: Number(e.target.value) })} /></Field>
+            <Field label="Overtime per hour — party room" hint="Staying past the booked end; charged per started 30 min"><Input type="number" min={0} value={edit.overtimeRoomPerHour ?? 0} onChange={(e) => setEdit({ ...edit, overtimeRoomPerHour: Math.max(0, Number(e.target.value) || 0) })} /></Field>
+            <Field label="Overtime per hour — full venue"><Input type="number" min={0} value={edit.overtimeFullPerHour ?? 0} onChange={(e) => setEdit({ ...edit, overtimeFullPerHour: Math.max(0, Number(e.target.value) || 0) })} /></Field>
+            <Field label="Free minutes after the end"><Input type="number" min={0} max={240} value={edit.overtimeGraceMin ?? 10} onChange={(e) => setEdit({ ...edit, overtimeGraceMin: Math.max(0, Math.min(240, Math.round(Number(e.target.value) || 0))) })} /></Field>
             <div className="flex items-end pb-2"><Toggle checked={edit.active} onChange={(v) => setEdit({ ...edit, active: v })} label="Bookable" /></div>
             <Field label="What's included (one per line)" className="sm:col-span-2"><Textarea value={edit.includes.join("\n")} onChange={(e) => setEdit({ ...edit, includes: e.target.value.split("\n").filter(Boolean) })} /></Field>
           </div>

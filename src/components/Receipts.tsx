@@ -1,6 +1,8 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
+import { bookingQr } from "@/lib/booking";
+import { CREDIT, CREDIT_PHONE } from "@/lib/credit";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Printer } from "lucide-react";
 import { useStore } from "@/lib/store";
@@ -22,6 +24,13 @@ function Row({ l, r, b }: { l: ReactNode; r: ReactNode; b?: boolean }) {
   );
 }
 const Hr = () => <div className="my-1.5 border-t border-dashed border-black/60" />;
+/** Last lines of every customer receipt. */
+const Credit = () => (
+  <div className="mt-2 text-center" style={{ fontSize: 9.5 }}>
+    {CREDIT}
+    <div>{CREDIT_PHONE}</div>
+  </div>
+);
 
 function Head() {
   const s = useStore((x) => x.settings);
@@ -114,6 +123,7 @@ export function TicketReceipt({ tickets, copy }: { tickets: Ticket[]; copy?: boo
         Served by {users.find((u) => u.id === t.createdBy)?.name.split(" ")[0]}
         <div className="mt-1 font-bold">{settings.receiptFooter}</div>
       </div>
+      <Credit />
     </div>
   );
 }
@@ -146,6 +156,7 @@ export function SaleReceipt({ s }: { s: Sale }) {
         Items: {s.items.reduce((a, i) => a + i.qty, 0)}
         <div className="mt-1 font-bold">{settings.receiptFooter}</div>
       </div>
+      <Credit />
     </div>
   );
 }
@@ -161,7 +172,7 @@ export function BookingConfirmation({ b }: { b: Booking }) {
       <Hr />
       <div className="text-center text-[14px] font-bold">BOOKING CONFIRMATION</div>
       <div className="my-2 flex justify-center">
-        <QRCodeSVG value={b.ref} size={110} />
+        <QRCodeSVG value={bookingQr(b)} size={110} />
       </div>
       <div className="text-center text-[15px] font-bold">{b.ref}</div>
       <Hr />
@@ -176,6 +187,8 @@ export function BookingConfirmation({ b }: { b: Booking }) {
       <Row l="Total" r={n(b.total)} />
       <Row l="Paid" r={n(b.paid)} />
       <Row l="Balance due" r={n(b.total - b.paid)} b />
+      <Hr />
+      <Credit />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 import "server-only";
 import { addDays, format } from "date-fns";
-import { bookingConflict, partyPrice, toHHMM } from "@/lib/booking";
-import { blocksFor, rulesFor, zoneRate } from "@/lib/pricing";
+import { bookingConflict, overtimeFor, partyPrice, toHHMM } from "@/lib/booking";
 import type { Booking, PayMethod } from "@/lib/types";
 import { timeToMin, uid } from "@/lib/utils";
 import { readCollection } from "../snapshot";
@@ -63,7 +62,9 @@ export async function updateBooking(m: Mut, b: Booking) {
   if (repriced) await assertPartyTotal(m, b);
   const moved = b.date !== ex.date || b.start !== ex.start || b.end !== ex.end || b.kind !== ex.kind || b.mode !== ex.mode || b.kids !== ex.kids;
   if (moved && (b.status === "pending" || b.status === "confirmed")) await assertSlotFree(m, b);
-  return { before: ex, after: await m.put("bookings", { ...b, ref: ex.ref, paid: ex.paid, createdAt: ex.createdAt, source: b.source ?? ex.source }) };
+  // arrival, departure and overtime only change through check-in / check-out
+  const visit = { checkedInAt: ex.checkedInAt, checkedOutAt: ex.checkedOutAt, overtimeMin: ex.overtimeMin, overtimeCharge: ex.overtimeCharge };
+  return { before: ex, after: await m.put("bookings", { ...b, ...visit, ref: ex.ref, paid: ex.paid, createdAt: ex.createdAt, source: b.source ?? ex.source }) };
 }
 
 export async function payBooking(m: Mut, id: string, amount: number, method: PayMethod) {
@@ -74,6 +75,38 @@ export async function payBooking(m: Mut, id: string, amount: number, method: Pay
   await m.update("bookings", id, { paid: b.paid + amount, status: b.status === "pending" ? "confirmed" : b.status });
   await m.addTx({ type: b.paid === 0 ? "deposit" : "party", method, amount, ref: b.id, refLabel: b.ref, customerId: b.customerId, discount: 0 });
   await m.log("Bookings", "Payment received", `${b.ref} · Rs. ${amount.toLocaleString()}`);
+}
+
+/**
+ * The party arrives (booking QR scanned) or leaves. Leaving after the booked end time — past the package's
+ * grace minutes — adds the overtime to the bill; the balance is then collected like any booking payment.
+ * Waiving the overtime needs the price override permission.
+ */
+export async function partyVisit(m: Mut, id: string, action: "in" | "out", waive = false) {
+  const b = await m.get("bookings", id, "Booking", { lock: true });
+  if (b.kind !== "party") throw badRequest("Only party bookings are checked in and out");
+  const now = new Date();
+  if (action === "in") {
+    if (b.status !== "pending" && b.status !== "confirmed") throw badRequest(`This booking is ${b.status}`);
+    if (b.date !== format(now, "yyyy-MM-dd")) throw badRequest(`This booking is for ${b.date}, not today`);
+    if (b.checkedInAt) throw badRequest(`${b.ref} already checked in`);
+    const after = await m.update("bookings", id, { checkedInAt: now.toISOString() });
+    await m.log("Bookings", "Party checked in", `${b.ref} · booked ${b.start}–${b.end}`);
+    return after;
+  }
+  if (!b.checkedInAt) throw badRequest("Check the party in first");
+  if (b.checkedOutAt) throw badRequest(`${b.ref} already checked out`);
+  if (waive && !m.actor.can("price.override")) throw new HttpError(403, "Waiving overtime needs the “Override price” permission");
+  const pkg = b.packageId ? await m.find("packages", b.packageId) : undefined;
+  const ot = overtimeFor(b, pkg, now);
+  const charge = waive ? 0 : ot.charge;
+  const after = await m.update("bookings", id, { checkedOutAt: now.toISOString(), overtimeMin: ot.minutes, overtimeCharge: charge, total: b.total + charge, status: "completed" });
+  await m.log(
+    "Bookings",
+    "Party checked out",
+    `${b.ref} · booked until ${b.end}${ot.minutes ? ` · ${ot.minutes} min over` : ""}${charge ? ` · overtime Rs. ${charge.toLocaleString()}` : ot.charge && waive ? " · overtime waived" : ""}`,
+  );
+  return after;
 }
 
 export async function setBookingStatus(m: Mut, id: string, status: Booking["status"]) {
@@ -108,70 +141,38 @@ export async function publicBooking(m: Mut, inp: PublicBookingInput) {
   const today = format(new Date(), "yyyy-MM-dd");
   if (inp.date < today || inp.date > format(addDays(new Date(), 365), "yyyy-MM-dd")) throw badRequest("Choose a date within the next year");
 
+  // online booking is for parties (party room or the whole venue); play visits are walk-in at the front desk
+  if (inp.kind !== "party") throw badRequest("Online booking is for parties — play sessions don't need booking, just come in");
   const zones = await readCollection(m.tx, "zones");
-  const play = zones.find((z) => z.kind === "play");
   const room = zones.find((z) => z.kind === "party");
-  if (!play || !room) throw badRequest("Online booking is not available right now");
+  if (!room) throw badRequest("Online booking is not available right now");
   const settings = await m.settings();
 
-  let booking: NewBooking;
-  if (inp.kind === "party") {
-    const pkg = inp.packageId ? await m.find("packages", inp.packageId) : undefined;
-    if (!pkg || !pkg.active) throw badRequest("Choose a party package");
-    if (inp.guests < 5 || inp.guests > 80) throw badRequest("Parties are for 5–80 guests");
-    const addons = inp.addonIds.length ? await m.rows("addons", "SELECT * FROM addons WHERE id = ANY($1::text[]) AND active ORDER BY seq", [inp.addonIds]) : [];
-    const price = partyPrice(pkg, inp.mode, inp.guests, addons.map((a) => a.id), addons);
-    booking = {
-      kind: "party",
-      mode: inp.mode,
-      customerId: "",
-      date: inp.date,
-      start: inp.start,
-      end: toHHMM(timeToMin(inp.start) + pkg.durationMin),
-      zoneId: room.id,
-      packageId: pkg.id,
-      guests: inp.guests,
-      kids: Math.round(inp.guests * 0.75),
-      addonIds: addons.map((a) => a.id),
-      theme: inp.theme,
-      notes: inp.contact.child ? `Birthday child: ${inp.contact.child}` : "",
-      total: price.total,
-      deposit: price.deposit,
-      paid: 0,
-      status: "pending",
-      source: "online",
-    };
-  } else {
-    if (inp.kids < 1 || inp.kids > 8 || inp.hours < 1 || inp.hours > 4) throw badRequest("Play visits are for 1–8 kids and 1–4 hours");
-    const start = timeToMin(inp.start);
-    const end = start + inp.hours * 60;
-    if (start < timeToMin(play.openTime) || end > timeToMin(play.closeTime)) throw badRequest(`The play area is open ${play.openTime}–${play.closeTime}`);
-    const plans = await readCollection(m.tx, "ratePlans");
-    const rate = zoneRate(plans, play.id);
-    if (!rate) throw badRequest("Online booking is not available right now");
-    const rules = await readCollection(m.tx, "rules");
-    const base = rate.price * blocksFor(inp.hours * 60) * inp.kids;
-    const adj = rulesFor(rules, settings, play.id, new Date(`${inp.date}T${inp.start}:00`)).reduce((a, r) => a + (r.adjust === "percent" ? (base * r.value) / 100 : r.value * inp.kids), 0);
-    const total = Math.round((base + adj) * 0.9); // online bookings get 10% off the counter price
-    booking = {
-      kind: "play",
-      customerId: "",
-      date: inp.date,
-      start: inp.start,
-      end: toHHMM(end),
-      zoneId: play.id,
-      guests: inp.kids + 1,
-      kids: inp.kids,
-      addonIds: [],
-      theme: inp.theme,
-      notes: inp.contact.child ? `Birthday child: ${inp.contact.child}` : "",
-      total,
-      deposit: Math.round(total * 0.3),
-      paid: 0,
-      status: "pending",
-      source: "online",
-    };
-  }
+  const pkg = inp.packageId ? await m.find("packages", inp.packageId) : undefined;
+  if (!pkg || !pkg.active) throw badRequest("Choose a party package");
+  if (inp.guests < 5 || inp.guests > 80) throw badRequest("Parties are for 5–80 guests");
+  const addons = inp.addonIds.length ? await m.rows("addons", "SELECT * FROM addons WHERE id = ANY($1::text[]) AND active ORDER BY seq", [inp.addonIds]) : [];
+  const price = partyPrice(pkg, inp.mode, inp.guests, addons.map((a) => a.id), addons);
+  const booking: NewBooking = {
+    kind: "party",
+    mode: inp.mode,
+    customerId: "",
+    date: inp.date,
+    start: inp.start,
+    end: toHHMM(timeToMin(inp.start) + pkg.durationMin),
+    zoneId: room.id,
+    packageId: pkg.id,
+    guests: inp.guests,
+    kids: Math.round(inp.guests * 0.75),
+    addonIds: addons.map((a) => a.id),
+    theme: inp.theme,
+    notes: inp.contact.child ? `Birthday child: ${inp.contact.child}` : "",
+    total: price.total,
+    deposit: price.deposit,
+    paid: 0,
+    status: "pending",
+    source: "online",
+  };
   await assertSlotFree(m, { ...booking, id: "" });
 
   const existing = await m.tx.one<{ id: string }>("SELECT id FROM customers WHERE phone = $1 ORDER BY seq LIMIT 1", [phone]);

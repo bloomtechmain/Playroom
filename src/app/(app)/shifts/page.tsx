@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FileText, Printer } from "lucide-react";
+import { FileText } from "lucide-react";
 import { useStore, useCan, useMyShift } from "@/lib/store";
 import { shiftSummary } from "@/lib/shift";
 import { cx, fmtDT, fmtTime, methodLabel, money } from "@/lib/utils";
@@ -10,6 +10,8 @@ import ShiftGate from "@/components/ShiftGate";
 import { useNewReport } from "@/lib/useNewReport";
 import { backupToFolder } from "@/lib/localBackup";
 import { isPractice } from "@/lib/practice";
+import { PrintModal } from "@/components/Receipts";
+import { shiftDoc } from "@/lib/receiptDocs";
 
 const NOTES = [5000, 2000, 1000, 500, 100, 50, 20, 10, 5, 2, 1];
 
@@ -30,7 +32,8 @@ function Inner() {
   const [counting, setCounting] = useState(false);
   const [counts, setCounts] = useState<Record<number, string>>({});
   const [notes, setNotes] = useState("");
-  const [report, setReport] = useState<string | null>(null);
+  /** `fresh`: the shift was just closed — print the slip straight away, like other receipts */
+  const [report, setReport] = useState<{ id: string; fresh?: boolean } | null>(null);
 
   const folderBackup = useStore((s) => s.folderBackup);
   const userName = useStore((s) => s.users.find((u) => u.id === s.currentUserId)?.name ?? "");
@@ -80,7 +83,7 @@ function Inner() {
                 <td className="tabular">{money(r.expected)}</td>
                 <td className="tabular">{s.countedCash != null ? money(s.countedCash) : "—"}</td>
                 <td>{r.variance != null ? <Variance v={r.variance} /> : "—"}</td>
-                <td className="text-right"><Button size="sm" variant="ghost" onClick={() => setReport(s.id)}>Report</Button></td>
+                <td className="text-right"><Button size="sm" variant="ghost" onClick={() => setReport({ id: s.id })}>Report</Button></td>
               </tr>
             );
           })}
@@ -95,7 +98,7 @@ function Inner() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setCounting(false)}>Cancel</Button>
-            <Button onClick={async () => { const id = await close(counted, notes); if (!id) return; setCounting(false); setCounts({}); setNotes(""); toast("Shift closed"); setReport(id); saveEndOfDay(); }}>Close shift</Button>
+            <Button onClick={async () => { const id = await close(counted, notes); if (!id) return; setCounting(false); setCounts({}); setNotes(""); toast("Shift closed"); setReport({ id, fresh: true }); saveEndOfDay(); }}>Close shift</Button>
           </>
         }
       >
@@ -138,12 +141,12 @@ function Inner() {
         <Field label="Notes (explain any variance)" className="mt-4"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </Modal>
 
-      {report && <ShiftReport id={report} onClose={() => setReport(null)} />}
+      {report && <ShiftReport id={report.id} autoPrint={report.fresh} onClose={() => setReport(null)} />}
     </>
   );
 }
 
-function ShiftReport({ id, onClose }: { id: string; onClose: () => void }) {
+function ShiftReport({ id, autoPrint, onClose }: { id: string; autoPrint?: boolean; onClose: () => void }) {
   const sh = useStore((s) => s.shifts.find((x) => x.id === id))!;
   const tx = useStore((s) => s.transactions);
   const users = useStore((s) => s.users);
@@ -176,8 +179,15 @@ function ShiftReport({ id, onClose }: { id: string; onClose: () => void }) {
     p.save(`shift-report_${cashier.replace(/\s+/g, "-").toLowerCase()}_${sh.openedAt.slice(0, 10)}`);
   };
   return (
-    <Modal open onClose={onClose} title="Shift-end report" width="max-w-md" footer={<><Button variant="secondary" onClick={onClose}>Close</Button><Button variant="secondary" icon={<Printer size={15} />} onClick={() => window.print()}>Print slip</Button><Button icon={<FileText size={15} />} onClick={() => downloadPdf().catch(() => toast("Couldn't create the PDF", "err"))}>Download PDF</Button></>}>
-      <div className="print-area bg-[#f6f3ee] py-4">
+    <PrintModal
+      open
+      onClose={onClose}
+      title="Shift-end report"
+      doc={() => shiftDoc(sh)}
+      autoPrint={autoPrint}
+      extra={<Button variant="ghost" className="mr-auto" icon={<FileText size={15} />} onClick={() => downloadPdf().catch(() => toast("Couldn't create the PDF", "err"))}>PDF</Button>}
+    >
+      <div>
         <div className="receipt mx-auto rounded-md border border-line p-4">
           <div className="text-center" style={{ fontFamily: "var(--font-fredoka)", fontSize: 18, fontWeight: 600 }}>{settings.businessName}</div>
           <div className="text-center font-bold">SHIFT REPORT</div>
@@ -207,7 +217,7 @@ function ShiftReport({ id, onClose }: { id: string; onClose: () => void }) {
           )}
         </div>
       </div>
-    </Modal>
+    </PrintModal>
   );
 }
 

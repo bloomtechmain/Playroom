@@ -1,7 +1,8 @@
 /**
  * Empties the database so the system can be tried from zero.
  * Keeps the roles and the named user accounts (default: admin); everything else — zones, prices,
- * products, packages, customers, tickets, sales, bookings, staff, payroll, activity, backups — is deleted
+ * products, packages, customers, tickets, sales, bookings, staff, training, KPI marks, payroll, activity,
+ * backups, queued WhatsApp messages — is deleted
  * and business settings go back to the defaults in database.sql.
  *   npm run db:clear                 — keep only "admin"
  *   npm run db:clear -- admin owner  — keep these usernames
@@ -15,7 +16,9 @@ import { commitRev } from "../src/server/rev";
 const DATA_TABLES = [
   "zones", "rate_plans", "price_rules", "promotions", "customers", "children", "tickets", "transactions",
   "products", "sales", "shifts", "refunds", "party_packages", "addons", "bookings", "expenses",
-  "employees", "attendance", "payroll_runs", "activity", "backups",
+  "employees", "attendance", "payroll_runs", "activity", "backups", "trainings", "evaluations",
+  // messages queued for WhatsApp (the linked phone itself, in whatsapp_auth, stays linked)
+  "whatsapp_messages",
 ];
 
 async function main() {

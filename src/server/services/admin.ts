@@ -26,6 +26,8 @@ const SETTING_PERMS: Record<string, string> = {
   etfPct: "payroll.run",
   epfIncludesAllowance: "payroll.run",
   whatsapp: "whatsapp.connect",
+  kpis: "hr.evaluate",
+  attendanceWeight: "hr.evaluate",
 };
 
 export async function setSettings(m: Mut, input: Partial<Settings>, detail?: string) {

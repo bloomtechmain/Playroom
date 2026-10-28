@@ -6,21 +6,17 @@ import { Pencil, Plus, ScanLine } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
 import { hoursWorked } from "@/lib/payroll";
 import type { Attendance } from "@/lib/types";
-import { cx, fmtDate, fmtTime, timeToMin, today, uid } from "@/lib/utils";
+import { cx, fmtDate, fmtTime, today, uid } from "@/lib/utils";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Select, Table, Tabs, toast } from "@/components/ui";
 import { Avatar } from "@/components/Shell";
 import { useStaffClock } from "@/components/StaffClock";
+import { ArrivalBadge, arrivalText } from "@/components/Arrival";
 
 export default function AttendancePage() {
   const can = useCan();
   if (!can("hr.view")) return <NoAccess what="attendance" />;
   return <Inner />;
 }
-
-const localHM = (iso: string) => {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
-};
 
 function Inner() {
   const can = useCan();
@@ -33,7 +29,8 @@ function Inner() {
   const [date, setDate] = useState("");
   const [edit, setEdit] = useState<{ a: Attendance; inT: string; outT: string } | null>(null);
   const d = today();
-  const late = (a: Attendance) => localHM(a.clockIn) > timeToMin(settings.workStart) + 10;
+  // arrivals against each employee's working hours: administrators and the owner only (the server sends nobody else the fields)
+  const canHours = can("hr.hours");
 
   const summary = useMemo(
     () =>
@@ -41,9 +38,9 @@ function Inner() {
         const rows = attendance.filter((a) => a.employeeId === e.id && a.date.startsWith(month));
         const hrs = rows.reduce((s, a) => s + hoursWorked(a), 0);
         const ot = rows.filter((a) => a.clockOut).reduce((s, a) => s + Math.max(0, hoursWorked(a) - settings.standardHours - 1), 0);
-        return { e, days: rows.length, hrs, ot, late: rows.filter(late).length, manual: rows.filter((a) => a.method === "manual").length };
+        const n = (p: Attendance["punctuality"]) => rows.filter((a) => a.punctuality === p).length;
+        return { e, days: rows.length, hrs, ot, onTime: n("on_time"), early: n("early"), late: n("late"), manual: rows.filter((a) => a.method === "manual").length };
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [employees, attendance, month, settings],
   );
 
@@ -97,12 +94,17 @@ function Inner() {
                 </div>
                 {a && (
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                    <div className="rounded-lg bg-[#faf7f1] py-2"><div className="text-muted">In</div><div className={cx("font-bold tabular", late(a) && "text-[#c24f69]")}>{fmtTime(a.clockIn)}</div></div>
+                    <div className="rounded-lg bg-[#faf7f1] py-2"><div className="text-muted">In</div><div className={cx("font-bold tabular", canHours && arrivalText(a))}>{fmtTime(a.clockIn)}</div></div>
                     <div className="rounded-lg bg-[#faf7f1] py-2"><div className="text-muted">Out</div><div className="font-bold tabular">{a.clockOut ? fmtTime(a.clockOut) : "—"}</div></div>
                     <div className="rounded-lg bg-[#faf7f1] py-2"><div className="text-muted">Hours</div><div className="font-bold tabular">{hoursWorked(a).toFixed(1)}</div></div>
                   </div>
                 )}
-                {a && late(a) && <p className="mt-2 text-xs font-bold text-[#c24f69]">Late — shift starts {settings.workStart}</p>}
+                {canHours && a?.punctuality && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+                    <ArrivalBadge a={a} />
+                    {a.scheduledIn && <span>shift starts {a.scheduledIn}</span>}
+                  </div>
+                )}
               </Card>
             );
           })}
@@ -111,14 +113,20 @@ function Inner() {
 
       {tab === "month" && (
         <Card pad={false}>
-          <Table head={["Employee", "Days present", "Hours worked", "Overtime (h)", "Late arrivals", "Manual edits"]}>
+          <Table head={["Employee", "Days present", "Hours worked", "Overtime (h)", ...(canHours ? ["On time", "Early", "Late"] : []), "Manual edits"]}>
             {summary.map((r) => (
               <tr key={r.e.id}>
                 <td className="font-bold">{r.e.name}</td>
                 <td className="tabular">{r.days}</td>
                 <td className="tabular">{r.hrs.toFixed(1)}</td>
                 <td className="tabular">{r.ot.toFixed(1)}</td>
-                <td>{r.late ? <Badge tone="rose">{r.late}</Badge> : <span className="text-muted">0</span>}</td>
+                {canHours && (
+                  <>
+                    <td>{r.onTime ? <Badge tone="mint">{r.onTime}</Badge> : <span className="text-muted">0</span>}</td>
+                    <td>{r.early ? <Badge tone="sky">{r.early}</Badge> : <span className="text-muted">0</span>}</td>
+                    <td>{r.late ? <Badge tone="rose">{r.late}</Badge> : <span className="text-muted">0</span>}</td>
+                  </>
+                )}
                 <td className="tabular text-muted">{r.manual}</td>
               </tr>
             ))}
@@ -128,12 +136,13 @@ function Inner() {
 
       {tab === "log" && (
         <Card pad={false}>
-          <Table head={["Date", "Employee", "Clock in", "Clock out", "Hours", "Method", ""]}>
+          <Table head={["Date", "Employee", "Clock in", ...(canHours ? ["Arrival"] : []), "Clock out", "Hours", "Method", ""]}>
             {log.map((a) => (
               <tr key={a.id}>
                 <td className="tabular">{fmtDate(a.date, "EEE dd MMM")}</td>
                 <td className="font-bold">{employees.find((e) => e.id === a.employeeId)?.name}</td>
-                <td className={cx("tabular", late(a) && "font-bold text-[#c24f69]")}>{fmtTime(a.clockIn)}</td>
+                <td className={cx("tabular", canHours && a.punctuality && cx("font-bold", arrivalText(a)))}>{fmtTime(a.clockIn)}</td>
+                {canHours && <td><ArrivalBadge a={a} /></td>}
                 <td className="tabular">{a.clockOut ? fmtTime(a.clockOut) : <Badge tone="mint">On site</Badge>}</td>
                 <td className="tabular">{hoursWorked(a).toFixed(1)}</td>
                 <td>{a.method === "qr" ? <Badge tone="sky">QR scan</Badge> : <Badge tone="sun">Manual</Badge>}</td>

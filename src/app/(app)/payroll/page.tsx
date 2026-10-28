@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { addMonths, format, subMonths } from "date-fns";
-import { Download, FileText, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Calculator, Download, FileText, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useStore, useCan } from "@/lib/store";
-import { calcPayLine, cleanItems, lineAllowances, lineDeductions, otHoursFor } from "@/lib/payroll";
+import { attendanceUnits, basicLabel, calcPayLine, cleanItems, EMPLOYMENT, employmentOf, hoursWorked, lineAllowances, lineDeductions, otHoursFor, payBasisOf, unitsLabel } from "@/lib/payroll";
+import { hoursLabel } from "@/lib/punctuality";
+import { ArrivalBadge, arrivalText } from "@/components/Arrival";
 import { PayItemsEditor } from "@/components/PayItems";
 import type { Employee, PayItem, PayLine, PayrollRun } from "@/lib/types";
-import { cx, fmtDate, money, uid } from "@/lib/utils";
+import { cx, fmtDate, fmtTime, money, uid } from "@/lib/utils";
 import { useNewReport } from "@/lib/useNewReport";
 import { Badge, Button, Card, Field, Input, Modal, NoAccess, PageHeader, Select, Stat, Table, Toggle, toast } from "@/components/ui";
 
@@ -31,17 +33,25 @@ function Inner() {
   const [month, setMonth] = useState(format(subMonths(new Date(), 0), "yyyy-MM"));
   const [slip, setSlip] = useState<{ run: PayrollRun; line: PayLine } | null>(null);
   const [adjust, setAdjust] = useState<PayLine | null>(null);
+  const [review, setReview] = useState<PayLine | null>(null);
   const run = runs.find((r) => r.month === month);
   const editable = can("payroll.run") && run?.status === "draft";
 
   const prepare = () => {
-    const lines = employees.filter((e) => e.active).map((e) => calcPayLine(e, settings, otHoursFor(attendance, e.id, month, settings.standardHours)));
+    // day- and hour-paid staff start from what attendance shows; the administrator checks it before paying
+    const lines = employees
+      .filter((e) => e.active)
+      .map((e) => {
+        const basis = payBasisOf(e);
+        const ot = basis === "hourly" ? 0 : otHoursFor(attendance, e.id, month, settings.standardHours);
+        return calcPayLine(e, settings, ot, { units: basis === "monthly" ? undefined : attendanceUnits(attendance, e, month) });
+      });
     const r: PayrollRun = { id: uid("pay-"), month, status: "draft", lines, createdAt: new Date().toISOString(), createdBy: me ?? "" };
     save("payroll", r, "Payroll", `Prepared payroll ${month}`);
     toast("Draft payroll prepared from attendance");
   };
 
-  const updateLine = (empId: string, patch: { otHours?: number; epf?: boolean; etf?: boolean; allowances?: PayItem[]; deductions?: PayItem[] }) => {
+  const updateLine = (empId: string, patch: { otHours?: number; epf?: boolean; etf?: boolean; allowances?: PayItem[]; deductions?: PayItem[]; units?: number; basic?: number }) => {
     if (!run) return;
     const lines = run.lines.map((l) => {
       if (l.employeeId !== empId) return l;
@@ -49,7 +59,11 @@ function Inner() {
       const epf = patch.epf ?? l.epf;
       const etf = patch.etf ?? l.etf;
       // this month's items (kept as adjusted), not the employee's current ones
-      return calcPayLine({ ...e, epf, etf }, settings, patch.otHours ?? l.otHours, { allowances: patch.allowances ?? lineAllowances(l), deductions: patch.deductions ?? lineDeductions(l) });
+      return calcPayLine({ ...e, epf, etf, rate: l.rate ?? e.rate }, settings, patch.otHours ?? l.otHours, {
+        allowances: patch.allowances ?? lineAllowances(l),
+        deductions: patch.deductions ?? lineDeductions(l),
+        ...kept(l, patch),
+      });
     });
     save("payroll", { ...run, lines }, "Payroll", `Edited ${month}`, { quiet: true });
   };
@@ -58,7 +72,7 @@ function Inner() {
     if (!run) return;
     const lines = run.lines.map((l) => {
       const e = employees.find((x) => x.id === l.employeeId)!;
-      return calcPayLine({ ...e, epf: l.epf, etf: l.etf }, settings, l.otHours, { allowances: lineAllowances(l), deductions: lineDeductions(l) });
+      return calcPayLine({ ...e, epf: l.epf, etf: l.etf, rate: l.rate ?? e.rate }, settings, l.otHours, { allowances: lineAllowances(l), deductions: lineDeductions(l), ...kept(l) });
     });
     save("payroll", { ...run, lines }, "Payroll", `Recalculated ${month}`);
     toast("Recalculated with current EPF/ETF settings");
@@ -83,10 +97,10 @@ function Inner() {
       { label: "Total cost to business", value: money(t.gross + t.epfEr + t.etf) },
     ]);
     p.table(
-      ["Employee", "Code", "EPF no.", "Basic", "Allowance", "OT hrs", "OT pay", "Deductions", "Gross", `EPF ${settings.epfEmployeePct}%`, "Net pay", `EPF ${settings.epfEmployerPct}%`, `ETF ${settings.etfPct}%`],
+      ["Employee", "Code", "EPF no.", "Basic / wages", "Allowance", "OT hrs", "OT pay", "Deductions", "Gross", `EPF ${settings.epfEmployeePct}%`, "Net pay", `EPF ${settings.epfEmployerPct}%`, `ETF ${settings.etfPct}%`],
       run.lines.map((l) => {
         const e = employees.find((x) => x.id === l.employeeId);
-        return [e?.name ?? "", e?.code ?? "", e?.epfNo || "-", l.basic, l.allowance, String(l.otHours || "-"), l.otPay, l.deductions, l.gross, l.epfEmployee, l.net, l.epfEmployer, l.etfEmployer];
+        return [unitsLabel(l) ? `${e?.name ?? ""} (${unitsLabel(l)})` : (e?.name ?? ""), e?.code ?? "", e?.epfNo || "-", l.basic, l.allowance, String(l.otHours || "-"), l.otPay, l.deductions, l.gross, l.epfEmployee, l.net, l.epfEmployer, l.etfEmployer];
       }),
       {
         align: ["l", "l", "l", "r", "r", "r", "r", "r", "r", "r", "r", "r", "r"],
@@ -153,13 +167,24 @@ function Inner() {
             <Stat label="Total cost to business" value={money(t.gross + t.epfEr + t.etf)} tone="rose" />
           </div>
           <Card pad={false}>
-            <Table head={["Employee", "Basic", "Allowance", "OT hrs", "OT pay", "Deductions", "Gross", `EPF ${settings.epfEmployeePct}%`, "Net pay", `EPF ${settings.epfEmployerPct}%`, `ETF ${settings.etfPct}%`, "EPF / ETF", ""]}>
+            <Table head={["Employee", "Basic / wages", "Allowance", "OT hrs", "OT pay", "Deductions", "Gross", `EPF ${settings.epfEmployeePct}%`, "Net pay", `EPF ${settings.epfEmployerPct}%`, `ETF ${settings.etfPct}%`, "EPF / ETF", ""]}>
               {run.lines.map((l) => {
                 const e = employees.find((x) => x.id === l.employeeId)!;
                 return (
                   <tr key={l.employeeId}>
-                    <td><div className="font-bold">{e.name}</div><div className="text-xs text-muted">{e.designation}</div></td>
-                    <td className="tabular">{money(l.basic, false)}</td>
+                    <td>
+                      <div className="font-bold">{e.name}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted">{e.designation}{employmentOf(e) !== "permanent" && <Badge tone={EMPLOYMENT[employmentOf(e)].tone}>{EMPLOYMENT[employmentOf(e)].label}</Badge>}</div>
+                    </td>
+                    <td className="tabular">
+                      {money(l.basic, false)}
+                      {unitsLabel(l) && <div className="text-[11px] text-muted">{unitsLabel(l)}</div>}
+                      {editable && l.payBasis && l.payBasis !== "monthly" && (
+                        <button onClick={() => setReview(l)} className={cx("mt-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold", l.basic ? "bg-sky-soft text-navy" : "bg-rose-soft text-[#c24f69]")}>
+                          <Calculator size={11} /> {l.basic ? "Review" : "Set pay"}
+                        </button>
+                      )}
+                    </td>
                     <td className="tabular">{money(l.allowance, false)}{lineAllowances(l).length > 1 && <div className="text-[11px] text-muted">{lineAllowances(l).length} items</div>}</td>
                     <td>{editable ? <Input className="h-8 w-16" type="number" value={l.otHours} onChange={(ev) => updateLine(l.employeeId, { otHours: Number(ev.target.value) })} /> : <span className="tabular">{l.otHours}</span>}</td>
                     <td className="tabular">{money(l.otPay, false)}</td>
@@ -202,11 +227,24 @@ function Inner() {
               </tr>
             </Table>
           </Card>
-          {run.status === "draft" && <p className="mt-3 text-xs text-muted">OT hours are pulled from QR attendance (hours beyond {settings.standardHours}h + 1h break per day). Adjust before paying.</p>}
+          {run.status === "draft" && <p className="mt-3 text-xs text-muted">OT hours are pulled from QR attendance (hours beyond {settings.standardHours}h + 1h break per day). Non-permanent staff start from the days they clocked in and part-time staff from the hours between clock-in and clock-out — use <b>Review</b> to check their attendance and set what they are paid.</p>}
         </>
       )}
       {!run && (
         <Card><p className="py-8 text-center text-sm text-muted">No payroll for {format(new Date(month + "-01"), "MMMM yyyy")} yet.{can("payroll.run") && " Prepare it to pull in salaries and overtime from attendance."}</p></Card>
+      )}
+      {review && run && (
+        <ReviewPay
+          month={month}
+          line={run.lines.find((l) => l.employeeId === review.employeeId) ?? review}
+          employee={employees.find((x) => x.id === review.employeeId)!}
+          onClose={() => setReview(null)}
+          onSave={(units, basic) => {
+            updateLine(review.employeeId, { units, basic });
+            setReview(null);
+            toast("Pay set for this month");
+          }}
+        />
       )}
       {slip && <Payslip run={slip.run} line={slip.line} onClose={() => setSlip(null)} />}
       {adjust && run && (
@@ -223,6 +261,89 @@ function Inner() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Days / hours and amount to carry into a recalculation. Monthly salaries follow the Staff record; for day- and
+ * hour-paid lines the days or hours stay, and so does an amount the administrator typed — unless the days or
+ * hours themselves change (then it's days × rate again).
+ */
+function kept(l: PayLine, patch: { units?: number; basic?: number } = {}) {
+  if (!l.payBasis || l.payBasis === "monthly") return {};
+  if ("basic" in patch) return { units: patch.units ?? l.units, basic: patch.basic };
+  if (patch.units !== undefined) return { units: patch.units };
+  return { units: l.units, basic: l.basic };
+}
+
+/** A day- or hour-paid employee's month: their attendance (and arrivals for administrators) next to what they're paid. */
+function ReviewPay({ month, line, employee, onClose, onSave }: { month: string; line: PayLine; employee: Employee; onClose: () => void; onSave: (units: number, basic: number | undefined) => void }) {
+  const attendance = useStore((s) => s.attendance);
+  const daily = line.payBasis === "daily";
+  const rate = line.rate ?? employee.rate ?? 0;
+  const rows = attendance.filter((a) => a.employeeId === employee.id && a.date.startsWith(month)).sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+  const fromAttendance = attendanceUnits(attendance, employee, month);
+  const [units, setUnits] = useState(String(line.units ?? 0));
+  // an amount typed by hand; null = days / hours × rate
+  const [amount, setAmount] = useState<string | null>(() => (Math.round((line.units ?? 0) * rate) !== line.basic ? String(line.basic) : null));
+  const n = Math.max(0, Number(units) || 0);
+  const calculated = Math.round(n * rate);
+  const pay = amount === null ? calculated : Math.max(0, Math.round(Number(amount) || 0));
+  const unit = daily ? "days" : "hours";
+  const open = rows.filter((a) => !a.clockOut).length;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`${employee.name} — ${format(new Date(month + "-01"), "MMMM yyyy")}`}
+      width="max-w-3xl"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onSave(n, amount === null ? undefined : pay)}>Save pay {money(pay)}</Button>
+        </>
+      }
+    >
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <Badge tone={EMPLOYMENT[employmentOf(employee)].tone}>{EMPLOYMENT[employmentOf(employee)].label}</Badge>
+        <span>Paid <b>{money(rate)}</b> per {daily ? "day" : "hour"}</span>
+        {employee.workHours && <span className="text-muted">Working hours {hoursLabel(employee.workHours)}</span>}
+      </div>
+      <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-line">
+        <Table head={["Date", "Clock in", ...(rows.some((a) => a.punctuality) ? ["Arrival"] : []), "Clock out", "Hours"]}>
+          {rows.map((a) => (
+            <tr key={a.id}>
+              <td className="tabular">{fmtDate(a.date, "EEE dd MMM")}</td>
+              <td className={cx("tabular", arrivalText(a))}>{fmtTime(a.clockIn)}</td>
+              {rows.some((x) => x.punctuality) && <td><ArrivalBadge a={a} /></td>}
+              <td className="tabular">{a.clockOut ? fmtTime(a.clockOut) : <Badge tone="sun">No clock-out</Badge>}</td>
+              <td className="tabular">{a.clockOut ? hoursWorked(a).toFixed(1) : "—"}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={5} className="py-6 text-center text-sm text-muted">No attendance recorded this month.</td>
+            </tr>
+          )}
+        </Table>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        Attendance shows <b>{fromAttendance} {unit}</b>
+        {!daily && open > 0 && ` (${open} day${open > 1 ? "s" : ""} without a clock-out not counted)`}.{" "}
+        {Number(units) !== fromAttendance && <button onClick={() => { setUnits(String(fromAttendance)); setAmount(null); }} className="font-bold text-navy hover:underline">Use {fromAttendance}</button>}
+      </p>
+      <div className="mt-4 grid gap-4 rounded-xl bg-[#faf7f1] p-4 sm:grid-cols-3">
+        <Field label={daily ? "Days to pay" : "Hours to pay"}>
+          <Input type="number" min={0} step={daily ? 0.5 : 0.25} value={units} onChange={(e) => { setUnits(e.target.value); setAmount(null); }} />
+        </Field>
+        <Field label="Amount to pay (Rs.)" hint={amount === null ? `${n} × ${money(rate)}` : <button onClick={() => setAmount(null)} className="font-bold text-navy hover:underline">Use {money(calculated)} ({n} × {money(rate)})</button>}>
+          <Input type="number" min={0} value={amount ?? calculated} onChange={(e) => setAmount(e.target.value)} />
+        </Field>
+        <div className="self-center text-sm">
+          <div className="text-xs text-muted">Allowances, overtime, EPF/ETF and deductions are added on the payroll line.</div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -248,7 +369,7 @@ function Payslip({ run, line, onClose }: { run: PayrollRun; line: PayLine; onClo
     p.details([["Employee", e.name], ["Employee code", e.code], ["Designation", e.designation || "-"], ["EPF number", e.epfNo || "-"], ["NIC", e.nic || "-"], ["Bank", e.bank || "-"]]);
     p.statement(["Amount (Rs.)"], [
       { kind: "section", label: "Earnings" },
-      { kind: "line", label: "Basic salary", values: [line.basic] },
+      { kind: "line", label: unitsLabel(line) ? `${basicLabel(line)} (${unitsLabel(line)})` : basicLabel(line), values: [line.basic] },
       ...lineAllowances(line).map((a) => ({ kind: "line" as const, label: `${a.name}${a.epf ? "" : " *"}`, values: [a.amount] })),
       { kind: "line", label: `Overtime (${line.otHours} hours)`, values: [line.otPay] },
       { kind: "subtotal", label: "Gross pay", values: [line.gross] },
@@ -288,7 +409,7 @@ function Payslip({ run, line, onClose }: { run: PayrollRun; line: PayLine; onClo
         <div className="grid gap-6 border-t border-line pt-3 sm:grid-cols-2">
           <div>
             <div className="mb-1 text-xs font-bold uppercase text-muted">Earnings</div>
-            <R l="Basic salary" r={line.basic} />
+            <R l={unitsLabel(line) ? `${basicLabel(line)} (${unitsLabel(line)})` : basicLabel(line)} r={line.basic} />
             {lineAllowances(line).map((a, i) => <R key={i} l={a.name} r={a.amount} />)}
             <R l={`Overtime (${line.otHours}h)`} r={line.otPay} />
             <R l="Gross" r={line.gross} b />
@@ -315,7 +436,7 @@ function AdjustLine({ month, line, employee, onClose, onSave }: { month: string;
   const settings = useStore((s) => s.settings);
   const [allowances, setAllowances] = useState<PayItem[]>(() => lineAllowances(line));
   const [deductions, setDeductions] = useState<PayItem[]>(() => lineDeductions(line));
-  const preview = calcPayLine({ ...employee, epf: line.epf, etf: line.etf }, settings, line.otHours, { allowances, deductions });
+  const preview = calcPayLine({ ...employee, epf: line.epf, etf: line.etf, rate: line.rate ?? employee.rate }, settings, line.otHours, { allowances, deductions, ...kept(line) });
   return (
     <Modal
       open
